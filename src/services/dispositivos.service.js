@@ -69,4 +69,48 @@ async function regenerarApiKey(recintoId, id) {
   return { api_key: apiKey };
 }
 
-module.exports = { listar, obtener, crear, actualizar, eliminar, regenerarApiKey };
+// ----- Llamadas de la propia Raspberry Pi (autenticada con API key) -----
+
+// Busca el equipo por su identificador y compara la API key con el hash guardado
+async function autenticar(identificador, apiKey) {
+  const { rows } = await query(
+    `SELECT d.id, d.recinto_id, d.nombre, d.api_key_hash, re.activo AS recinto_activo
+     FROM dispositivos d JOIN recintos re ON re.id = d.recinto_id
+     WHERE d.identificador = $1`,
+    [identificador]
+  );
+  const dispositivo = rows[0];
+  const valida = dispositivo && (await bcrypt.compare(apiKey, dispositivo.api_key_hash));
+  if (!valida) throw new HttpError(401, 'Credenciales de dispositivo inválidas');
+  if (!dispositivo.recinto_activo) throw new HttpError(403, 'El recinto está desactivado');
+  return { id: dispositivo.id, recinto_id: dispositivo.recinto_id, nombre: dispositivo.nombre };
+}
+
+// Señal de vida: el equipo avisa que sigue conectado
+async function heartbeat(dispositivo, ip) {
+  await query(
+    "UPDATE dispositivos SET ultimo_heartbeat = NOW(), estado = 'activo', ip = COALESCE($2, ip) WHERE id = $1",
+    [dispositivo.id, ip || null]
+  );
+  return { ok: true, hora_servidor: new Date().toISOString() };
+}
+
+// Lista de patentes autorizadas del recinto para la copia local de la Raspberry Pi
+async function obtenerPatentes(dispositivo) {
+  const { rows } = await query(
+    `SELECT patente, origen, vigente_hasta FROM vw_patentes_autorizadas
+     WHERE recinto_id = $1 ORDER BY patente`,
+    [dispositivo.recinto_id]
+  );
+  await query('UPDATE dispositivos SET ultima_sincronizacion = NOW() WHERE id = $1', [dispositivo.id]);
+  await query(
+    "INSERT INTO sincronizaciones (dispositivo_id, registros_enviados, estado) VALUES ($1, $2, 'ok')",
+    [dispositivo.id, rows.length]
+  );
+  return { generado: new Date().toISOString(), total: rows.length, patentes: rows };
+}
+
+module.exports = {
+  listar, obtener, crear, actualizar, eliminar, regenerarApiKey,
+  autenticar, heartbeat, obtenerPatentes,
+};

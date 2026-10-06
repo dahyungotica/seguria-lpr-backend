@@ -3,6 +3,7 @@ const { query } = require('../config/db');
 const HttpError = require('../utils/HttpError');
 const { Filtros } = require('../utils/sql');
 const { obtenerPaginacion, respuestaPaginada } = require('../utils/paginacion');
+const { emitirNotificacion } = require('../sockets');
 
 const SQL_NOTIFICACIONES = `
   SELECT n.*, o.nombre || ' ' || o.apellido AS origen_nombre, un.identificador AS origen_unidad
@@ -54,4 +55,29 @@ async function marcarTodasLeidas(usuarioId) {
   return rowCount;
 }
 
-module.exports = { listar, contarNoLeidas, marcarLeida, marcarTodasLeidas };
+// Crea una notificación para cada administrador activo del recinto y la emite en tiempo real.
+// datos: { tipo, mensaje, entidad, entidad_id, datos_anteriores, datos_nuevos, usuario_origen_id }
+async function notificarAdmins(recintoId, datos) {
+  const { rows } = await query(
+    `INSERT INTO notificaciones (recinto_id, usuario_destino_id, usuario_origen_id, tipo, entidad, entidad_id,
+                                 datos_anteriores, datos_nuevos, mensaje)
+     SELECT $1, u.id, $2, $3, $4, $5, $6, $7, $8
+     FROM usuarios u JOIN roles r ON r.id = u.rol_id
+     WHERE u.recinto_id = $1 AND r.nombre = 'admin_recinto' AND u.activo
+     RETURNING *`,
+    [
+      recintoId,
+      datos.usuario_origen_id || null,
+      datos.tipo,
+      datos.entidad || null,
+      datos.entidad_id || null,
+      datos.datos_anteriores ? JSON.stringify(datos.datos_anteriores) : null,
+      datos.datos_nuevos ? JSON.stringify(datos.datos_nuevos) : null,
+      datos.mensaje,
+    ]
+  );
+  for (const n of rows) emitirNotificacion(n.usuario_destino_id, n);
+  return rows.length;
+}
+
+module.exports = { listar, contarNoLeidas, marcarLeida, marcarTodasLeidas, notificarAdmins };
