@@ -24,6 +24,39 @@ function haceHoras(horas) {
   return new Date(Date.now() - horas * 60 * 60 * 1000);
 }
 
+// Cambios de vehículos hechos por el propietario (como los generará el módulo del propietario)
+async function insertarNotificacionesDemo(cliente, { recintoId, adminRecintoId, propietarioId, vehiculo1, vehiculo2 }) {
+  const base = { recinto_id: recintoId, usuario_destino_id: adminRecintoId, usuario_origen_id: propietarioId, entidad: 'vehiculos' };
+  const notificaciones = [
+    {
+      ...base, tipo: 'vehiculo_creado', entidad_id: vehiculo2, leida: true,
+      mensaje: 'Patricia Propietaria registró el vehículo LTPR45',
+      datos_nuevos: JSON.stringify({ patente: 'LTPR45', marca: 'Nissan', modelo: 'Navara', color: 'Blanco', tipo: 'camioneta' }),
+      created_at: haceHoras(30),
+    },
+    {
+      ...base, tipo: 'vehiculo_editado', entidad_id: vehiculo1,
+      mensaje: 'Patricia Propietaria editó el vehículo GHJK12',
+      datos_anteriores: JSON.stringify({ patente: 'GHJK12', color: 'Negro', modelo: 'Yaris' }),
+      datos_nuevos: JSON.stringify({ patente: 'GHJK12', color: 'Gris', modelo: 'Yaris' }),
+      created_at: haceHoras(4),
+    },
+    {
+      ...base, usuario_origen_id: null, tipo: 'acceso_no_autorizado', entidad: 'accesos',
+      mensaje: 'Intento de ingreso de la patente BBCC34, que no está autorizada',
+      datos_nuevos: JSON.stringify({ patente: 'BBCC34', camara: 'Cámara Portón Principal' }),
+      created_at: haceHoras(3),
+    },
+  ];
+  for (const n of notificaciones) {
+    const columnas = Object.keys(n);
+    await cliente.query(
+      `INSERT INTO notificaciones (${columnas.join(', ')}) VALUES (${columnas.map((_, i) => `$${i + 1}`).join(', ')})`,
+      Object.values(n)
+    );
+  }
+}
+
 async function seed(cliente) {
   // Si ya existen los usuarios de prueba, no se duplica nada
   const { rows: existentes } = await cliente.query(
@@ -101,7 +134,7 @@ async function seed(cliente) {
       ...usuarioBase, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
       email: 'admin@seguria.cl', rol_id: roles.admin_plataforma, recinto_id: null,
     });
-    await insertar(cliente, 'usuarios', {
+    const adminRecintoId = await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '22222222-2', nombre: 'Rodrigo', apellido: 'Recinto',
       email: 'recinto@seguria.cl', rol_id: roles.admin_recinto, recinto_id: recintoId,
     });
@@ -120,7 +153,7 @@ async function seed(cliente) {
       propietario_id: propietarioId, recinto_id: recintoId, patente: 'GH-JK-12',
       marca: 'Toyota', modelo: 'Yaris', color: 'Gris', tipo: 'auto',
     });
-    await insertar(cliente, 'vehiculos', {
+    const vehiculo2 = await insertar(cliente, 'vehiculos', {
       propietario_id: propietarioId, recinto_id: recintoId, patente: 'LT-PR-45',
       marca: 'Nissan', modelo: 'Navara', color: 'Blanco', tipo: 'camioneta',
     });
@@ -153,6 +186,11 @@ async function seed(cliente) {
       fecha_hora: haceHoras(0.5), resultado: 'visita', visita_id: visitaId,
     });
 
+    // 8. Notificaciones de ejemplo para el administrador del recinto
+    await insertarNotificacionesDemo(cliente, {
+      recintoId, adminRecintoId, propietarioId, vehiculo1, vehiculo2,
+    });
+
     await cliente.query('COMMIT');
   } catch (err) {
     await cliente.query('ROLLBACK');
@@ -180,4 +218,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { seed };
+module.exports = { seed, insertarNotificacionesDemo };

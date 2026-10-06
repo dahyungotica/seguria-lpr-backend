@@ -1,11 +1,25 @@
-// Controlador de usuarios (esqueleto: responde 501 hasta que se implemente)
-const noImplementado = require('../utils/noImplementado');
-// const usuariosService = require('../services/usuarios.service');
+// Controlador de usuarios (el alcance por rol se resuelve en el servicio)
+const usuariosService = require('../services/usuarios.service');
+const { datosBody, datosQuery, idDeRuta } = require('../utils/datosValidados');
 
-module.exports = {
-  listar: noImplementado('Listar usuarios'),
-  obtener: noImplementado('Obtener usuario'),
-  crear: noImplementado('Crear usuario'),
-  actualizar: noImplementado('Actualizar usuario'),
-  cambiarEstado: noImplementado('Activar/desactivar usuario'),
-};
+async function listar(req, res) {
+  res.json(await usuariosService.listar(req.usuario, datosQuery(req)));
+}
+
+async function obtener(req, res) {
+  res.json(await usuariosService.obtener(req.usuario, idDeRuta(req)));
+}
+
+async function crear(req, res) {
+  res.status(201).json(await usuariosService.crear(req.usuario, datosBody(req)));
+}
+
+async function actualizar(req, res) {
+  res.json(await usuariosService.actualizar(req.usuario, idDeRuta(req), datosBody(req)));
+}
+
+async function cambiarEstado(req, res) {
+  res.json(await usuariosService.cambiarEstado(req.usuario, idDeRuta(req), datosBody(req).activo));
+}
+
+module.exports = { listar, obtener, crear, actualizar, cambiarEstado };
