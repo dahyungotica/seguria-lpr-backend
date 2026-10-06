@@ -57,7 +57,8 @@ async function insertarNotificacionesDemo(cliente, { recintoId, adminRecintoId, 
   }
 }
 
-async function seed(cliente) {
+// soloAdmin = true: crea únicamente los roles y la cuenta admin@seguria.cl (base "limpia")
+async function seed(cliente, { soloAdmin = false } = {}) {
   // Si ya existen los usuarios de prueba, no se duplica nada
   const { rows: existentes } = await cliente.query(
     "SELECT 1 FROM usuarios WHERE email = 'admin@seguria.cl'"
@@ -90,6 +91,16 @@ async function seed(cliente) {
         [nombre, descripcion]
       );
       roles[nombre] = rows[0].id;
+    }
+
+    if (soloAdmin) {
+      await insertar(cliente, 'usuarios', {
+        password_hash: passwordHash, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
+        email: 'admin@seguria.cl', rol_id: roles.admin_plataforma, recinto_id: null,
+      });
+      await cliente.query('COMMIT');
+      console.log(`✅ Base limpia: solo roles y admin@seguria.cl (contraseña: ${PASSWORD_PRUEBA})`);
+      return;
     }
 
     // 2. Recinto y unidades
@@ -161,7 +172,7 @@ async function seed(cliente) {
     // 6. Visita vigente (hoy, por 4 horas)
     const visitaId = await insertar(cliente, 'visitas', {
       propietario_id: propietarioId, recinto_id: recintoId,
-      nombre_visitante: 'Carlos Muñoz', rut_visitante: '15555555-5', patente: 'KZ-WX-88',
+      nombre_visitante: 'Carlos Muñoz', rut_visitante: '15555555-6', patente: 'KZ-WX-88',
       motivo: 'Visita familiar', fecha_inicio: haceHoras(1), fecha_fin: haceHoras(-3),
       estado: 'activa',
     });
@@ -205,7 +216,7 @@ async function seed(cliente) {
 async function main() {
   const cliente = await conectar();
   try {
-    await seed(cliente);
+    await seed(cliente, { soloAdmin: process.argv.includes('--solo-admin') });
   } finally {
     await cliente.end();
   }

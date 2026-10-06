@@ -1,6 +1,6 @@
 // Controlador de dispositivos (Raspberry Pi)
 const dispositivosService = require('../services/dispositivos.service');
-const noImplementado = require('../utils/noImplementado');
+const accesosService = require('../services/accesos.service');
 const { datosBody, idDeRuta } = require('../utils/datosValidados');
 
 // ----- Gestión desde el panel del admin de recinto -----
@@ -31,6 +31,20 @@ async function regenerarApiKey(req, res) {
   res.json(await dispositivosService.regenerarApiKey(req.usuario.recinto_id, idDeRuta(req)));
 }
 
+// ----- Llamadas de la Raspberry Pi (req.dispositivo lo deja authDispositivo) -----
+
+async function heartbeat(req, res) {
+  res.json(await dispositivosService.heartbeat(req.dispositivo, datosBody(req).ip));
+}
+
+async function obtenerPatentes(req, res) {
+  res.json(await dispositivosService.obtenerPatentes(req.dispositivo));
+}
+
+async function registrarAcceso(req, res) {
+  res.status(201).json(await accesosService.registrarDesdeDispositivo(req.dispositivo, datosBody(req)));
+}
+
 module.exports = {
   listar,
   obtener,
@@ -38,8 +52,7 @@ module.exports = {
   actualizar,
   eliminar,
   regenerarApiKey,
-  // ----- Endpoints de la Raspberry Pi (pendientes) -----
-  heartbeat: noImplementado('Heartbeat del dispositivo'),
-  obtenerPatentes: noImplementado('Sincronizar patentes autorizadas'),
-  registrarAcceso: noImplementado('Registrar acceso desde dispositivo'),
+  heartbeat,
+  obtenerPatentes,
+  registrarAcceso,
 };

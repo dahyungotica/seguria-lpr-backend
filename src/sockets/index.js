@@ -8,6 +8,7 @@
 //
 // Eventos que emite el servidor:
 //   "acceso:nuevo"          -> nueva detección de patente (monitor del guardia / panel admin)
+//   "acceso:actualizado"    -> un guardia autorizó manualmente un acceso
 //   "vehiculo:cambio"       -> un propietario creó/editó/eliminó un vehículo (admin del recinto)
 //   "notificacion:nueva"    -> notificación para un usuario
 const { Server } = require('socket.io');
@@ -50,10 +51,6 @@ function iniciarSockets(servidorHttp) {
     }
 
     socket.emit('conectado', { mensaje: 'Conectado a SegurIA-LPR en tiempo real' });
-
-    socket.on('disconnect', () => {
-      // Aquí se podría registrar la desconexión si fuera necesario
-    });
   });
 
   return io;
@@ -64,30 +61,41 @@ function obtenerIO() {
   return io;
 }
 
-// ----- Funciones de ejemplo para emitir eventos desde los servicios -----
+// Emite solo si Socket.io está activo (los scripts de BD no lo inician)
+function emitir(rooms, evento, datos) {
+  if (!io) return;
+  let destino = io;
+  for (const room of rooms) destino = destino.to(room);
+  destino.emit(evento, datos);
+}
+
+// ----- Funciones para emitir eventos desde los servicios -----
 
 // Nueva detección: la ven guardias y administradores del recinto
 function emitirAccesoNuevo(recintoId, acceso) {
-  obtenerIO()
-    .to(`recinto:${recintoId}:${ROLES.GUARDIA}`)
-    .to(`recinto:${recintoId}:${ROLES.ADMIN_RECINTO}`)
-    .emit('acceso:nuevo', acceso);
+  emitir([`recinto:${recintoId}:${ROLES.GUARDIA}`, `recinto:${recintoId}:${ROLES.ADMIN_RECINTO}`], 'acceso:nuevo', acceso);
 }
 
-// Cambio en un vehículo: lo ve el administrador del recinto
+// Acceso modificado (ej. autorización manual del guardia)
+function emitirAccesoActualizado(recintoId, acceso) {
+  emitir([`recinto:${recintoId}:${ROLES.GUARDIA}`, `recinto:${recintoId}:${ROLES.ADMIN_RECINTO}`], 'acceso:actualizado', acceso);
+}
+
+// Cambio en un vehículo: lo ven el administrador y los guardias del recinto
 function emitirVehiculoCambio(recintoId, cambio) {
-  obtenerIO().to(`recinto:${recintoId}:${ROLES.ADMIN_RECINTO}`).emit('vehiculo:cambio', cambio);
+  emitir([`recinto:${recintoId}:${ROLES.ADMIN_RECINTO}`, `recinto:${recintoId}:${ROLES.GUARDIA}`], 'vehiculo:cambio', cambio);
 }
 
 // Notificación dirigida a un usuario
 function emitirNotificacion(usuarioId, notificacion) {
-  obtenerIO().to(`usuario:${usuarioId}`).emit('notificacion:nueva', notificacion);
+  emitir([`usuario:${usuarioId}`], 'notificacion:nueva', notificacion);
 }
 
 module.exports = {
   iniciarSockets,
   obtenerIO,
   emitirAccesoNuevo,
+  emitirAccesoActualizado,
   emitirVehiculoCambio,
   emitirNotificacion,
 };

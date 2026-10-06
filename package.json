@@ -9,7 +9,9 @@
     "dev": "nodemon src/index.js",
     "db:init": "node scripts/db-init.js",
     "db:seed": "node scripts/seed.js",
-    "db:reset": "node scripts/db-reset.js"
+    "db:reset": "node scripts/db-reset.js",
+    "db:limpiar": "node scripts/db-reset.js --solo-admin",
+    "simular": "node scripts/simular-deteccion.js"
   },
   "engines": {
     "node": ">=20"

@@ -5,7 +5,7 @@ const { conectar, ejecutarArchivoSql } = require('./conexion');
 const { seed } = require('./seed');
 
 async function main() {
-  if (env.esProduccion && process.argv[2] !== '--forzar') {
+  if (env.esProduccion && !process.argv.includes('--forzar')) {
     console.error('❌ NODE_ENV=production: db:reset está bloqueado. Usa "node scripts/db-reset.js --forzar" si realmente quieres borrar todo.');
     process.exit(1);
   }
@@ -16,7 +16,7 @@ async function main() {
     console.log('🗑️  Esquema anterior eliminado');
     await ejecutarArchivoSql(cliente, 'schema.sql');
     console.log('✅ Esquema creado');
-    await seed(cliente);
+    await seed(cliente, { soloAdmin: process.argv.includes('--solo-admin') });
   } finally {
     await cliente.end();
   }

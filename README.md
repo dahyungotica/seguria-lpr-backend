@@ -6,7 +6,7 @@ API REST y servidor de tiempo real de **SegurIA-LPR**, sistema de control de acc
 - **Hosting:** Render (plan gratuito).
 - **Frontend:** repositorio aparte → [seguria-lpr-frontend](https://github.com/dahyungotica/seguria-lpr-frontend).
 
-> Estado actual: login, MER y los módulos de **ambos administradores** (plataforma y recinto) funcionales. Los endpoints del propietario (vehículos, visitas), del guardia (autorización manual) y de la Raspberry Pi están protegidos por rol y responden `501 No implementado`.
+> Estado actual: todos los módulos funcionales (administrador de plataforma, administrador de recinto, propietario, guardia) y los endpoints de la Raspberry Pi (heartbeat, sincronización de patentes y registro de detecciones con imagen en Cloudinary).
 
 ## Estructura
 
@@ -63,6 +63,8 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `npm run db:init` | Crea tablas, triggers y vistas (`sql/schema.sql`). Si ya existen, no hace nada. |
 | `npm run db:seed` | Carga datos de prueba (roles, recinto, unidades, cámara, dispositivo, usuarios, vehículos, accesos). |
 | `npm run db:reset` | **Borra todo**, recrea el esquema y carga los datos de prueba. Bloqueado si `NODE_ENV=production`. |
+| `npm run db:limpiar` | **Borra todo** y deja solo los roles y la cuenta `admin@seguria.cl`. Útil para empezar pruebas desde cero. |
+| `npm run simular -- --id <ID> --key <API_KEY> --camara <ID> [--patente ABCD12]` | Simula una Raspberry Pi enviando una detección (ver más abajo). |
 
 El modelo está documentado en [docs/MER.md](docs/MER.md).
 
@@ -85,6 +87,8 @@ Verificar: <http://localhost:3000/api/health> → `{ "ok": true, "db": "<hora de
 | Administrador de recinto | `recinto@seguria.cl` | `Seguria2026!` |
 | Propietario | `propietario@seguria.cl` | `Seguria2026!` |
 | Guardia | `guardia@seguria.cl` | `Seguria2026!` |
+
+Si la base se dejó limpia con `npm run db:limpiar`, solo existe `admin@seguria.cl`; el resto de las cuentas se crean desde la aplicación.
 
 El seed también imprime en consola la API key del dispositivo de prueba `RPI-AROMOS-01` (solo se guarda su hash).
 
@@ -111,9 +115,10 @@ curl http://localhost:3000/api/auth/me -H "Authorization: Bearer <token>"
 | Dispositivos | `GET/POST /dispositivos`, `GET/PUT/DELETE /dispositivos/:id`, `POST /dispositivos/:id/api-key` | admin_recinto | ✅ |
 | Accesos | `GET /accesos` (filtros + paginación), `GET /accesos/:id`, `GET /accesos/estadisticas` | admin_recinto, guardia, propietario (solo los suyos) | ✅ |
 | Notificaciones | `GET /notificaciones`, `GET /notificaciones/no-leidas`, `PATCH /notificaciones/:id/leida`, `PATCH /notificaciones/leer-todas` | admin_recinto | ✅ |
-| Vehículos / Visitas | `/vehiculos`, `/visitas` | propietario | 🚧 501 |
-| Autorización manual | `POST /accesos/:id/autorizar` | guardia | 🚧 501 |
-| Raspberry Pi | `/dispositivos/equipo/*` (API key) | dispositivo | 🚧 501 |
+| Vehículos | `GET/POST /vehiculos`, `GET/PUT/DELETE /vehiculos/:id` | propietario (los suyos, sin aprobación; notifica al admin) · admin_recinto · guardia (lectura) | ✅ |
+| Visitas | `GET/POST /visitas` (`?vigencia=proximas|pasadas|hoy`), `GET/PUT /visitas/:id`, `PATCH /visitas/:id/cancelar` | propietario · admin_recinto y guardia (lectura) | ✅ |
+| Autorización manual | `POST /accesos/:id/autorizar` `{ detalle_autorizacion }` | guardia (solo accesos denegados) | ✅ |
+| Raspberry Pi | `POST /dispositivos/equipo/heartbeat`, `GET /dispositivos/equipo/patentes`, `POST /dispositivos/equipo/accesos` | dispositivo (headers `X-Dispositivo-Id` y `X-API-Key`) | ✅ |
 
 Notas:
 - Todas las rutas (salvo health y login) van bajo `/api` y requieren `Authorization: Bearer <token>`.
@@ -122,6 +127,22 @@ Notas:
 - Errores de validación: `400 { error, detalles: [{ campo, mensaje }] }`. Duplicados (email, RUT, unidad, identificador): `409`.
 - Al desactivar un recinto, ninguno de sus usuarios puede iniciar sesión.
 - Al crear un dispositivo o regenerar su API key, la clave se devuelve **una sola vez** (solo se guarda su hash).
+
+### Detecciones de la Raspberry Pi
+
+`POST /api/dispositivos/equipo/accesos` recibe `{ camara_id, patente, confianza_ocr, imagen_base64 | imagen_url, fecha_hora? }`.
+El servidor decide el resultado con `vw_patentes_autorizadas` (vehículo activo → `autorizado`, visita vigente → `visita`, otro → `denegado`),
+sube la imagen a Cloudinary (carpeta `seguria-lpr/capturas`), guarda solo la URL, la emite por Socket.io (`acceso:nuevo`) y, si fue denegado, notifica al administrador.
+
+### Simular una detección (sin Raspberry Pi)
+
+1. Como admin de recinto, en **Cámaras y equipos** crea un equipo y copia su API key. Anota el id de la cámara.
+2. Abre el **Monitor en vivo** con un guardia.
+3. Ejecuta (contra local o contra Render con `--api https://seguria-lpr-backend.onrender.com/api`):
+   ```bash
+   npm run simular -- --id RPI-01 --key <API_KEY> --camara 1 --patente ABCD12
+   ```
+   Sin `--patente` usa una al azar (aparecerá como denegada). `--sin-imagen` evita subir a Cloudinary.
 
 Los permisos de cada ruta están en `src/routes/*.routes.js` y el alcance por rol en `src/services/*.service.js`.
 
