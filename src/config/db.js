@@ -1,6 +1,10 @@
 // Pool de conexiones a PostgreSQL
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 const { env } = require('./env');
+
+// Por defecto pg devuelve BIGINT (ids de accesos/notificaciones, COUNT) como texto.
+// Nuestros valores caben de sobra en un número de JavaScript, así que se convierten.
+types.setTypeParser(types.builtins.INT8, (valor) => parseInt(valor, 10));
 
 let pool = null;
 

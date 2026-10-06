@@ -6,7 +6,7 @@ API REST y servidor de tiempo real de **SegurIA-LPR**, sistema de control de acc
 - **Hosting:** Render (plan gratuito).
 - **Frontend:** repositorio aparte → [seguria-lpr-frontend](https://github.com/dahyungotica/seguria-lpr-frontend).
 
-> Estado actual: login y autenticación funcionales, MER completo. El resto de los endpoints existen, están protegidos por rol y responden `501 No implementado`.
+> Estado actual: login, MER y los módulos de **ambos administradores** (plataforma y recinto) funcionales. Los endpoints del propietario (vehículos, visitas), del guardia (autorización manual) y de la Raspberry Pi están protegidos por rol y responden `501 No implementado`.
 
 ## Estructura
 
@@ -100,14 +100,30 @@ curl http://localhost:3000/api/auth/me -H "Authorization: Bearer <token>"
 
 ## Endpoints
 
-| Método | Ruta | Estado |
-|---|---|---|
-| GET | `/api/health` | ✅ |
-| POST | `/api/auth/login` | ✅ `{ token, usuario: { id, nombre, email, rol, recinto_id } }` |
-| GET | `/api/auth/me` | ✅ (requiere token) |
-| * | `/api/usuarios`, `/recintos`, `/unidades`, `/vehiculos`, `/visitas`, `/camaras`, `/dispositivos`, `/accesos`, `/notificaciones` | 🚧 501, protegidos por rol |
+| Módulo | Rutas | Quién | Estado |
+|---|---|---|---|
+| Salud | `GET /api/health` | público | ✅ |
+| Auth | `POST /auth/login`, `GET /auth/me` | público / token | ✅ |
+| Recintos | `GET/POST /recintos`, `GET/PUT /recintos/:id`, `PATCH /recintos/:id/estado` | admin_plataforma (admin_recinto solo ve el suyo) | ✅ |
+| Usuarios | `GET/POST /usuarios`, `GET/PUT /usuarios/:id`, `PATCH /usuarios/:id/estado` | plataforma → admins de recinto · recinto → propietarios y guardias · guardia → solo lectura de propietarios | ✅ |
+| Unidades | `GET/POST /unidades`, `GET/PUT/DELETE /unidades/:id` | admin_recinto (guardia lectura) | ✅ |
+| Cámaras | `GET/POST /camaras`, `GET/PUT/DELETE /camaras/:id` | admin_recinto (guardia lectura) | ✅ |
+| Dispositivos | `GET/POST /dispositivos`, `GET/PUT/DELETE /dispositivos/:id`, `POST /dispositivos/:id/api-key` | admin_recinto | ✅ |
+| Accesos | `GET /accesos` (filtros + paginación), `GET /accesos/:id`, `GET /accesos/estadisticas` | admin_recinto, guardia, propietario (solo los suyos) | ✅ |
+| Notificaciones | `GET /notificaciones`, `GET /notificaciones/no-leidas`, `PATCH /notificaciones/:id/leida`, `PATCH /notificaciones/leer-todas` | admin_recinto | ✅ |
+| Vehículos / Visitas | `/vehiculos`, `/visitas` | propietario | 🚧 501 |
+| Autorización manual | `POST /accesos/:id/autorizar` | guardia | 🚧 501 |
+| Raspberry Pi | `/dispositivos/equipo/*` (API key) | dispositivo | 🚧 501 |
 
-Los permisos de cada ruta están en `src/routes/*.routes.js`.
+Notas:
+- Todas las rutas (salvo health y login) van bajo `/api` y requieren `Authorization: Bearer <token>`.
+- Los datos de un recinto se filtran siempre por el `recinto_id` del token: un administrador nunca ve ni modifica datos de otro recinto.
+- Listados paginados (`usuarios`, `accesos`, `notificaciones`) aceptan `?pagina=1&limite=20` y responden `{ datos, total, pagina, limite, paginas }`.
+- Errores de validación: `400 { error, detalles: [{ campo, mensaje }] }`. Duplicados (email, RUT, unidad, identificador): `409`.
+- Al desactivar un recinto, ninguno de sus usuarios puede iniciar sesión.
+- Al crear un dispositivo o regenerar su API key, la clave se devuelve **una sola vez** (solo se guarda su hash).
+
+Los permisos de cada ruta están en `src/routes/*.routes.js` y el alcance por rol en `src/services/*.service.js`.
 
 ## Tiempo real (Socket.io)
 

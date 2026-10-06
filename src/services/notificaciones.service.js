@@ -1,10 +1,57 @@
-// Servicio de notificaciones: aquí irá la lógica de negocio y las consultas SQL.
-// const { query } = require('../config/db');
-//
-// TODO: implementar. Ejemplo de estructura:
-// async function listar(recintoId) {
-//   const { rows } = await query('SELECT ... WHERE recinto_id = $1', [recintoId]);
-//   return rows;
-// }
+// Servicio de notificaciones: cada usuario ve solo las que le fueron enviadas
+const { query } = require('../config/db');
+const HttpError = require('../utils/HttpError');
+const { Filtros } = require('../utils/sql');
+const { obtenerPaginacion, respuestaPaginada } = require('../utils/paginacion');
 
-module.exports = {};
+const SQL_NOTIFICACIONES = `
+  SELECT n.*, o.nombre || ' ' || o.apellido AS origen_nombre, un.identificador AS origen_unidad
+  FROM notificaciones n
+  LEFT JOIN usuarios o ON o.id = n.usuario_origen_id
+  LEFT JOIN unidades un ON un.id = o.unidad_id
+`;
+
+async function listar(usuarioId, filtros) {
+  const paginacion = obtenerPaginacion(filtros);
+  const f = new Filtros();
+  f.agregar('n.usuario_destino_id = ?', usuarioId);
+  if (filtros.leida !== undefined) f.agregar('n.leida = ?', filtros.leida);
+  if (filtros.tipo) f.agregar('n.tipo = ?', filtros.tipo);
+
+  const limite = f.parametro(paginacion.limite);
+  const offset = f.parametro(paginacion.offset);
+  const { rows } = await query(
+    `SELECT x.*, COUNT(*) OVER() AS total_filas
+     FROM (${SQL_NOTIFICACIONES} ${f.where}) x
+     ORDER BY x.created_at DESC
+     LIMIT ${limite} OFFSET ${offset}`,
+    f.valores
+  );
+  return respuestaPaginada(rows, paginacion);
+}
+
+async function contarNoLeidas(usuarioId) {
+  const { rows } = await query(
+    'SELECT COUNT(*)::int AS total FROM notificaciones WHERE usuario_destino_id = $1 AND NOT leida',
+    [usuarioId]
+  );
+  return rows[0].total;
+}
+
+async function marcarLeida(usuarioId, id) {
+  const { rowCount } = await query(
+    'UPDATE notificaciones SET leida = TRUE WHERE id = $1 AND usuario_destino_id = $2',
+    [id, usuarioId]
+  );
+  if (rowCount === 0) throw new HttpError(404, 'Notificación no encontrada');
+}
+
+async function marcarTodasLeidas(usuarioId) {
+  const { rowCount } = await query(
+    'UPDATE notificaciones SET leida = TRUE WHERE usuario_destino_id = $1 AND NOT leida',
+    [usuarioId]
+  );
+  return rowCount;
+}
+
+module.exports = { listar, contarNoLeidas, marcarLeida, marcarTodasLeidas };
