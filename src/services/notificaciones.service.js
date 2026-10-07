@@ -9,7 +9,7 @@ const SQL_NOTIFICACIONES = `
   SELECT n.*, o.nombre || ' ' || o.apellido AS origen_nombre, un.identificador AS origen_unidad
   FROM notificaciones n
   LEFT JOIN usuarios o ON o.id = n.usuario_origen_id
-  LEFT JOIN usuario_recinto our ON our.usuario_id = o.id AND our.recinto_id = n.recinto_id
+  LEFT JOIN usuario_recinto our ON our.usuario_id = o.id AND our.recinto_id = n.recinto_id AND our.unidad_id IS NOT NULL
   LEFT JOIN unidades un ON un.id = our.unidad_id
 `;
 
@@ -67,7 +67,7 @@ async function notificarAdmins(recintoId, datos) {
      SELECT $1, u.id, $2, $3, $4, $5, $6, $7, $8
      FROM usuario_recinto ur
      JOIN usuarios u ON u.id = ur.usuario_id
-     JOIN roles r ON r.id = u.rol_id
+     JOIN roles r ON r.id = ur.rol_id
      WHERE ur.recinto_id = $1 AND r.nombre = 'admin_recinto' AND u.activo AND ur.activo
      RETURNING *`,
     [

@@ -7,9 +7,9 @@ const auditoria = require('./auditoria.service');
 
 const CAMPOS_EDITABLES = ['nombre', 'direccion', 'comuna', 'region', 'tipo', 'telefono'];
 
-// Cuenta las personas con vínculo en el recinto según su rol
-const contarRol = (rol) => `(SELECT COUNT(*) FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id
-      JOIN roles ro ON ro.id = u.rol_id WHERE ur.recinto_id = r.id AND ro.nombre = '${rol}')::int`;
+// Cuenta las personas que tienen ese rol en el recinto
+const contarRol = (rol) => `(SELECT COUNT(*) FROM usuario_recinto ur
+      JOIN roles ro ON ro.id = ur.rol_id WHERE ur.recinto_id = r.id AND ro.nombre = '${rol}')::int`;
 
 // Recintos con contadores útiles para el listado
 const SQL_RECINTOS = `

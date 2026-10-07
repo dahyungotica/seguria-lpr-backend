@@ -34,7 +34,7 @@ const SQL_VISITAS = `
          un.identificador AS unidad
   FROM visitas vi
   JOIN usuarios p ON p.id = vi.propietario_id
-  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = vi.recinto_id
+  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = vi.recinto_id AND pur.unidad_id IS NOT NULL
   LEFT JOIN unidades un ON un.id = pur.unidad_id
 `;
 
@@ -122,7 +122,7 @@ async function validarPropietario(recintoId, propietarioId) {
   if (!propietarioId) throw new HttpError(400, 'Debes indicar el propietario');
   const { rows } = await query(
     `SELECT (u.activo AND ur.activo) AS activo
-     FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = u.rol_id
+     FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = ur.rol_id
      WHERE ur.usuario_id = $1 AND ur.recinto_id = $2 AND r.nombre = 'propietario'`,
     [propietarioId, recintoId]
   );

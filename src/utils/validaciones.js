@@ -75,6 +75,18 @@ const ip = () =>
     .optional({ values: 'null' })
     .isIP().withMessage('IP inválida');
 
+// Roles por recinto: [{ recinto_id, rol, unidad_id }]
+const ROLES_RECINTO = ['admin_recinto', 'propietario', 'guardia'];
+function rolesBody({ obligatorio = false } = {}) {
+  return [
+    (obligatorio ? body('roles') : body('roles').optional())
+      .isArray({ max: 200 }).withMessage('Los roles deben ser una lista'),
+    body('roles.*.recinto_id').isInt({ min: 1 }).withMessage('Recinto inválido').toInt(),
+    body('roles.*.rol').isIn(ROLES_RECINTO).withMessage('Rol inválido'),
+    body('roles.*.unidad_id').optional({ values: 'null' }).isInt({ min: 1 }).withMessage('Unidad inválida').toInt(),
+  ];
+}
+
 const activoBody = body('activo').isBoolean({ strict: true }).withMessage('activo debe ser true o false');
 
 // ---------- Query string ----------
@@ -98,6 +110,7 @@ module.exports = {
   telefono,
   ip,
   activoBody,
+  rolesBody,
   paginacionQuery,
   activoQuery,
   busquedaQuery,

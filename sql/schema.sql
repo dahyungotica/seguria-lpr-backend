@@ -31,12 +31,12 @@ $$ LANGUAGE sql IMMUTABLE;
 CREATE TABLE roles (
   id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   nombre      VARCHAR(30) NOT NULL UNIQUE
-              CHECK (nombre IN ('admin_plataforma', 'admin_recinto', 'propietario', 'guardia')),
+              CHECK (nombre IN ('admin_recinto', 'propietario', 'guardia')),
   descripcion VARCHAR(200)
 );
 
-COMMENT ON TABLE roles IS 'Roles del sistema. Determinan los permisos de cada usuario.';
-COMMENT ON COLUMN roles.nombre IS 'Nombre interno del rol: admin_plataforma, admin_recinto, propietario o guardia.';
+COMMENT ON TABLE roles IS 'Roles que una persona puede tener dentro de un recinto. Se asignan en usuario_recinto (una persona puede tener varios).';
+COMMENT ON COLUMN roles.nombre IS 'Nombre interno del rol: admin_recinto, propietario o guardia. El administrador de plataforma se marca en usuarios.es_admin_plataforma.';
 
 -- ---------------------------------------------------------------------
 -- 2. recintos
@@ -91,54 +91,56 @@ CREATE TABLE usuarios (
   email         VARCHAR(150) NOT NULL UNIQUE CHECK (email = LOWER(email)),
   password_hash VARCHAR(100) NOT NULL,
   telefono      VARCHAR(20),
-  rol_id        INTEGER NOT NULL REFERENCES roles (id) ON DELETE RESTRICT,
+  es_admin_plataforma BOOLEAN NOT NULL DEFAULT FALSE,
   activo        BOOLEAN NOT NULL DEFAULT TRUE,
   ultimo_login  TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_usuarios_rol ON usuarios (rol_id);
 CREATE INDEX idx_usuarios_apellido_nombre ON usuarios (apellido, nombre);
 
-COMMENT ON TABLE usuarios IS 'Cuentas de las personas que usan la plataforma web. El vínculo con los recintos está en usuario_recinto.';
+COMMENT ON TABLE usuarios IS 'Cuentas de las personas (una por persona, con un solo email y contraseña). Sus roles en cada recinto están en usuario_recinto.';
+COMMENT ON COLUMN usuarios.es_admin_plataforma IS 'TRUE solo para el administrador de plataforma, que no se vincula a recintos.';
 COMMENT ON COLUMN usuarios.email IS 'Correo de inicio de sesión, siempre en minúsculas.';
 COMMENT ON COLUMN usuarios.password_hash IS 'Hash bcrypt de la contraseña. Nunca se guarda la contraseña en texto plano.';
 COMMENT ON COLUMN usuarios.activo IS 'Bloqueo global de la cuenta. El estado en cada recinto está en usuario_recinto.activo.';
 
 -- ---------------------------------------------------------------------
--- 5. usuario_recinto (vínculo de un usuario con uno o más recintos)
+-- 5. usuario_recinto (roles de una persona en cada recinto)
 -- ---------------------------------------------------------------------
 CREATE TABLE usuario_recinto (
   id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   usuario_id INTEGER NOT NULL REFERENCES usuarios (id) ON DELETE CASCADE,
   recinto_id INTEGER NOT NULL REFERENCES recintos (id) ON DELETE RESTRICT,
+  rol_id     INTEGER NOT NULL REFERENCES roles (id) ON DELETE RESTRICT,
   unidad_id  INTEGER REFERENCES unidades (id) ON DELETE RESTRICT,
   activo     BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_usuario_recinto UNIQUE (usuario_id, recinto_id)
+  CONSTRAINT uq_usuario_recinto_rol UNIQUE (usuario_id, recinto_id, rol_id)
 );
 
-CREATE INDEX idx_usuario_recinto_recinto ON usuario_recinto (recinto_id);
+CREATE INDEX idx_usuario_recinto_recinto ON usuario_recinto (recinto_id, rol_id);
 CREATE INDEX idx_usuario_recinto_unidad ON usuario_recinto (unidad_id);
 
-COMMENT ON TABLE usuario_recinto IS 'Vincula a un usuario con cada recinto donde participa. Un propietario o un guardia puede estar en más de un recinto; el administrador de plataforma no se vincula a ninguno.';
-COMMENT ON COLUMN usuario_recinto.unidad_id IS 'Unidad del propietario en ese recinto. Obligatoria para propietarios y vacía para los demás roles.';
-COMMENT ON COLUMN usuario_recinto.activo IS 'Desactivar el vínculo quita el acceso a ese recinto sin afectar los demás recintos del usuario.';
+COMMENT ON TABLE usuario_recinto IS 'Roles de cada persona en cada recinto. Una misma cuenta puede ser, por ejemplo, administradora de 3 recintos, guardia en 2 y propietaria en 1. El administrador de plataforma no se vincula.';
+COMMENT ON COLUMN usuario_recinto.rol_id IS 'Rol que la persona cumple en ese recinto (una fila por rol).';
+COMMENT ON COLUMN usuario_recinto.unidad_id IS 'Unidad del propietario en ese recinto. Obligatoria en el rol propietario y vacía en los demás.';
+COMMENT ON COLUMN usuario_recinto.activo IS 'Desactivar quita el acceso con ese rol en ese recinto sin afectar los demás roles ni recintos.';
 
--- Reglas entre rol, recinto y unidad (no se pueden expresar con un CHECK simple)
+-- Reglas entre persona, rol, recinto y unidad (no se pueden expresar con un CHECK simple)
 CREATE OR REPLACE FUNCTION fn_validar_usuario_recinto()
 RETURNS TRIGGER AS $$
 DECLARE
   v_rol TEXT;
   v_recinto_unidad INTEGER;
 BEGIN
-  SELECT r.nombre INTO v_rol FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = NEW.usuario_id;
-
-  IF v_rol = 'admin_plataforma' THEN
+  IF (SELECT es_admin_plataforma FROM usuarios WHERE id = NEW.usuario_id) THEN
     RAISE EXCEPTION 'El administrador de plataforma no se vincula a recintos';
   END IF;
+
+  SELECT nombre INTO v_rol FROM roles WHERE id = NEW.rol_id;
 
   IF v_rol = 'propietario' AND NEW.unidad_id IS NULL THEN
     RAISE EXCEPTION 'El propietario debe tener una unidad en el recinto';
@@ -485,6 +487,7 @@ SELECT
 FROM vehiculos v
 JOIN usuarios u ON u.id = v.propietario_id
 JOIN usuario_recinto ur ON ur.usuario_id = v.propietario_id AND ur.recinto_id = v.recinto_id
+JOIN roles ro ON ro.id = ur.rol_id AND ro.nombre = 'propietario'
 WHERE v.activo AND u.activo AND ur.activo
 UNION ALL
 SELECT
@@ -497,6 +500,7 @@ SELECT
 FROM visitas vi
 JOIN usuarios u ON u.id = vi.propietario_id
 JOIN usuario_recinto ur ON ur.usuario_id = vi.propietario_id AND ur.recinto_id = vi.recinto_id
+JOIN roles ro ON ro.id = ur.rol_id AND ro.nombre = 'propietario'
 WHERE vi.patente IS NOT NULL
   AND u.activo AND ur.activo
   AND vi.estado IN ('programada', 'activa')

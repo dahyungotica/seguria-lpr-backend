@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { body } = require('express-validator');
 const validar = require('../middlewares/validar');
 const autenticar = require('../middlewares/auth');
+const ROLES = require('../utils/roles');
 const controller = require('../controllers/auth.controller');
 
 const router = Router();
@@ -17,11 +18,14 @@ router.post(
   controller.login
 );
 
-// POST /api/auth/recinto  { recinto_id }  -> token nuevo para trabajar en ese recinto
+// POST /api/auth/recinto  { recinto_id, rol? }  -> token nuevo para trabajar en ese recinto con ese rol
 router.post(
   '/recinto',
   autenticar.sinRecinto,
-  body('recinto_id').isInt({ min: 1 }).withMessage('Recinto inválido').toInt(),
+  [
+    body('recinto_id').isInt({ min: 1 }).withMessage('Recinto inválido').toInt(),
+    body('rol').optional().isIn(Object.values(ROLES).filter((r) => r !== ROLES.ADMIN_PLATAFORMA)).withMessage('Rol inválido'),
+  ],
   validar,
   controller.seleccionarRecinto
 );

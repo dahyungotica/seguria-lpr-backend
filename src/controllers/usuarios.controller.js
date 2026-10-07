@@ -6,6 +6,10 @@ async function listar(req, res) {
   res.json(await usuariosService.listar(req.usuario, datosQuery(req)));
 }
 
+async function opciones(req, res) {
+  res.json(await usuariosService.opciones(req.usuario));
+}
+
 async function obtener(req, res) {
   res.json(await usuariosService.obtener(req.usuario, idDeRuta(req)));
 }
@@ -19,8 +23,8 @@ async function actualizar(req, res) {
 }
 
 async function cambiarEstado(req, res) {
-  const { activo, vinculo_id: vinculoId } = datosBody(req);
-  res.json(await usuariosService.cambiarEstado(req.usuario, idDeRuta(req), activo, vinculoId));
+  const { activo, recinto_id: recintoId } = datosBody(req);
+  res.json(await usuariosService.cambiarEstado(req.usuario, idDeRuta(req), activo, recintoId));
 }
 
-module.exports = { listar, obtener, crear, actualizar, cambiarEstado };
+module.exports = { listar, opciones, obtener, crear, actualizar, cambiarEstado };

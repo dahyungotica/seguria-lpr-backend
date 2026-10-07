@@ -114,9 +114,10 @@ curl http://localhost:3000/api/auth/me -H "Authorization: Bearer <token>"
 | Módulo | Rutas | Quién | Estado |
 |---|---|---|---|
 | Salud | `GET /api/health` | público | ✅ |
-| Auth | `POST /auth/login`, `POST /auth/recinto` `{ recinto_id }` (elegir o cambiar recinto), `GET /auth/me` | público / token | ✅ |
+| Auth | `POST /auth/login`, `POST /auth/recinto` `{ recinto_id, rol }` (elegir o cambiar perfil), `GET /auth/me` | público / token | ✅ |
+| Mi perfil | `GET/PUT /perfil`, `PUT /perfil/password`, `PUT /perfil/roles` | todos (roles: solo admin_recinto) | ✅ |
 | Recintos | `GET/POST /recintos`, `GET/PUT /recintos/:id`, `PATCH /recintos/:id/estado` | admin_plataforma (admin_recinto solo ve el suyo) | ✅ |
-| Usuarios | `GET/POST /usuarios`, `GET/PUT /usuarios/:id`, `PATCH /usuarios/:id/estado` | plataforma → admins de recinto · recinto → propietarios y guardias · guardia → solo lectura de propietarios | ✅ |
+| Usuarios | `GET/POST /usuarios`, `GET /usuarios/opciones`, `GET/PUT /usuarios/:id`, `PATCH /usuarios/:id/estado` | plataforma → administradores de recinto · recinto → administradores, guardias y propietarios de sus recintos · guardia → solo lectura de propietarios | ✅ |
 | Unidades | `GET/POST /unidades`, `GET/PUT/DELETE /unidades/:id` | admin_recinto (guardia lectura) | ✅ |
 | Cámaras | `GET/POST /camaras`, `GET/PUT/DELETE /camaras/:id` | admin_recinto (guardia lectura) | ✅ |
 | Dispositivos | `GET/POST /dispositivos`, `GET/PUT/DELETE /dispositivos/:id`, `POST /dispositivos/:id/api-key` | admin_recinto | ✅ |
@@ -142,13 +143,26 @@ Notas:
 El servidor decide el resultado con `vw_patentes_autorizadas` (vehículo activo → `autorizado`, visita vigente → `visita`, otro → `denegado`),
 sube la imagen a Cloudinary (carpeta `seguria-lpr/capturas`), guarda solo la URL, la emite por Socket.io (`acceso:nuevo`) y, si fue denegado, notifica al administrador.
 
-### Varios recintos por usuario (HU-19, HU-20, HU-22)
+### Una cuenta, varios roles y recintos (HU-19, HU-20, HU-22)
 
-El vínculo usuario-recinto está en la tabla `usuario_recinto`. Si al crear un propietario, guardia o administrador
-el email ya existe con el mismo rol y RUT, la persona se **vincula** al nuevo recinto (no se pide contraseña).
-Quien pertenece a varios recintos inicia sesión con `requiere_seleccion: true` y elige con `POST /api/auth/recinto`;
-el token queda asociado a ese recinto. Desactivar a alguien solo afecta su acceso a ese recinto, y tiene efecto
-inmediato: cada petición verifica que la cuenta y el vínculo sigan activos.
+Cada persona tiene **una sola cuenta** (un email, un RUT y una contraseña). Sus roles están en `usuario_recinto`,
+una fila por recinto + rol: por ejemplo, administradora de 3 recintos, guardia en 2 y propietaria en 1.
+
+- `POST /usuarios` y `PUT /usuarios/:id` reciben `roles: [{ recinto_id, rol, unidad_id }]` (la unidad solo en el rol propietario).
+  Si el email ya existe con el mismo RUT, solo se le agregan los roles (no se pide contraseña).
+- El admin de plataforma asigna el rol **administrador** en cualquier recinto (un formulario, varios recintos).
+- El admin de recinto asigna **administrador, guardia y propietario** en todos los recintos que administra.
+  `GET /usuarios/opciones` entrega esos recintos con sus unidades. Al editar, solo cambian los roles de sus recintos.
+- Cada recinto + rol es un **perfil**. Con un solo perfil se entra directo; con varios, el login responde
+  `requiere_seleccion: true` y se elige con `POST /api/auth/recinto { recinto_id, rol }`. El token guarda el recinto y el rol.
+- Desactivar a alguien (`PATCH /usuarios/:id/estado`) afecta sus roles en ese recinto. Tiene efecto inmediato:
+  cada petición verifica que la cuenta y ese rol en ese recinto sigan activos.
+
+### Mi perfil
+
+`GET /perfil`, `PUT /perfil` (nombre, apellido, email, teléfono), `PUT /perfil/password { password_actual, password }`
+y, solo para el admin de recinto, `PUT /perfil/roles { roles }` para agregarse como guardia o propietario en sus recintos
+(no puede quitarse su propio rol de administrador).
 
 ### Capturas privadas (HU-32)
 

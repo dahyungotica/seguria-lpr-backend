@@ -35,7 +35,7 @@ const SQL_ACCESOS = `
   LEFT JOIN vehiculos v ON v.id = a.vehiculo_id
   LEFT JOIN visitas vi ON vi.id = a.visita_id
   LEFT JOIN usuarios p ON p.id = COALESCE(v.propietario_id, vi.propietario_id)
-  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = a.recinto_id
+  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = a.recinto_id AND pur.unidad_id IS NOT NULL
   LEFT JOIN unidades un ON un.id = pur.unidad_id
   LEFT JOIN usuarios g ON g.id = a.guardia_id
   LEFT JOIN alertas al ON al.acceso_id = a.id
@@ -129,9 +129,9 @@ async function estadisticas(recintoId) {
     // Totales del recinto (personas con vínculo activo en este recinto)
     query(
       `SELECT
-         (SELECT COUNT(*) FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = u.rol_id
+         (SELECT COUNT(*) FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = ur.rol_id
            WHERE ur.recinto_id = $1 AND r.nombre = 'propietario' AND ur.activo AND u.activo)::int AS propietarios,
-         (SELECT COUNT(*) FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = u.rol_id
+         (SELECT COUNT(*) FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = ur.rol_id
            WHERE ur.recinto_id = $1 AND r.nombre = 'guardia' AND ur.activo AND u.activo)::int AS guardias,
          (SELECT COUNT(*) FROM vehiculos WHERE recinto_id = $1 AND activo)::int AS vehiculos,
          (SELECT COUNT(*) FROM visitas WHERE recinto_id = $1 AND estado IN ('programada', 'activa')

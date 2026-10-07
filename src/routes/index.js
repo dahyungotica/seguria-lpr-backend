@@ -20,6 +20,7 @@ router.get('/health', async (req, res) => {
 
 router.use('/auth', require('./auth.routes'));
 router.use('/usuarios', require('./usuarios.routes'));
+router.use('/perfil', require('./perfil.routes'));
 router.use('/recintos', require('./recintos.routes'));
 router.use('/unidades', require('./unidades.routes'));
 router.use('/vehiculos', require('./vehiculos.routes'));

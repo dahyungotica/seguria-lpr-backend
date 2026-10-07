@@ -7,9 +7,10 @@ async function login(req, res) {
   res.json(await authService.login(email, password));
 }
 
-// Elegir o cambiar el recinto de trabajo (usuarios con más de un recinto)
+// Elegir o cambiar el portal de trabajo (recinto + rol) de quien tiene más de uno
 async function seleccionarRecinto(req, res) {
-  res.json(await authService.seleccionarRecinto(req.usuario, datosBody(req).recinto_id));
+  const { recinto_id: recintoId, rol } = datosBody(req);
+  res.json(await authService.seleccionarRecinto(req.usuario, recintoId, rol));
 }
 
 async function me(req, res) {
