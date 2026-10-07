@@ -11,15 +11,15 @@ async function obtener(req, res) {
 }
 
 async function crear(req, res) {
-  res.status(201).json(await recintosService.crear(datosBody(req)));
+  res.status(201).json(await recintosService.crear(req.usuario, datosBody(req)));
 }
 
 async function actualizar(req, res) {
-  res.json(await recintosService.actualizar(idDeRuta(req), datosBody(req)));
+  res.json(await recintosService.actualizar(req.usuario, idDeRuta(req), datosBody(req)));
 }
 
 async function cambiarEstado(req, res) {
-  res.json(await recintosService.cambiarEstado(idDeRuta(req), datosBody(req).activo));
+  res.json(await recintosService.cambiarEstado(req.usuario, idDeRuta(req), datosBody(req).activo));
 }
 
 module.exports = { listar, obtener, crear, actualizar, cambiarEstado };

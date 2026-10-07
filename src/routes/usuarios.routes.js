@@ -20,10 +20,12 @@ function reglasUsuario(edicion) {
     v.textoRequerido('apellido', 'El apellido', 80, { edicion }),
     v.rut({ edicion }),
     v.email({ edicion }),
-    v.password({ edicion }),
+    // Opcional también al crear: si la persona ya tiene cuenta en otro recinto solo se vincula
+    v.password({ edicion: true }),
     v.telefono(),
     v.idBody('recinto_id', 'Recinto', { opcional: true }),
     v.idBody('unidad_id', 'Unidad', { opcional: true }),
+    v.idBody('vinculo_id', 'Vínculo', { opcional: true }),
     ...(edicion ? [] : [v.enumBody('rol', 'El rol', ROLES_CREABLES)]),
   ];
 }
@@ -43,6 +45,6 @@ router.get('/', permitirRoles(...ADMINS, ROLES.GUARDIA), filtrosListado, validar
 router.get('/:id', permitirRoles(...ADMINS, ROLES.GUARDIA), v.idParam, validar, controller.obtener);
 router.post('/', permitirRoles(...ADMINS), reglasUsuario(false), validar, controller.crear);
 router.put('/:id', permitirRoles(...ADMINS), [v.idParam, ...reglasUsuario(true)], validar, controller.actualizar);
-router.patch('/:id/estado', permitirRoles(...ADMINS), [v.idParam, v.activoBody], validar, controller.cambiarEstado);
+router.patch('/:id/estado', permitirRoles(...ADMINS), [v.idParam, v.activoBody, v.idBody('vinculo_id', 'Vínculo', { opcional: true })], validar, controller.cambiarEstado);
 
 module.exports = router;

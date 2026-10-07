@@ -92,8 +92,6 @@ CREATE TABLE usuarios (
   password_hash VARCHAR(100) NOT NULL,
   telefono      VARCHAR(20),
   rol_id        INTEGER NOT NULL REFERENCES roles (id) ON DELETE RESTRICT,
-  recinto_id    INTEGER REFERENCES recintos (id) ON DELETE RESTRICT,
-  unidad_id     INTEGER REFERENCES unidades (id) ON DELETE SET NULL,
   activo        BOOLEAN NOT NULL DEFAULT TRUE,
   ultimo_login  TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -101,31 +99,49 @@ CREATE TABLE usuarios (
 );
 
 CREATE INDEX idx_usuarios_rol ON usuarios (rol_id);
-CREATE INDEX idx_usuarios_recinto ON usuarios (recinto_id);
-CREATE INDEX idx_usuarios_unidad ON usuarios (unidad_id);
 CREATE INDEX idx_usuarios_apellido_nombre ON usuarios (apellido, nombre);
 
-COMMENT ON TABLE usuarios IS 'Personas que usan la plataforma web (administradores, propietarios y guardias).';
+COMMENT ON TABLE usuarios IS 'Cuentas de las personas que usan la plataforma web. El vínculo con los recintos está en usuario_recinto.';
 COMMENT ON COLUMN usuarios.email IS 'Correo de inicio de sesión, siempre en minúsculas.';
 COMMENT ON COLUMN usuarios.password_hash IS 'Hash bcrypt de la contraseña. Nunca se guarda la contraseña en texto plano.';
-COMMENT ON COLUMN usuarios.recinto_id IS 'Recinto al que pertenece. NULL solo para admin_plataforma.';
-COMMENT ON COLUMN usuarios.unidad_id IS 'Unidad del propietario. Solo aplica al rol propietario.';
+COMMENT ON COLUMN usuarios.activo IS 'Bloqueo global de la cuenta. El estado en cada recinto está en usuario_recinto.activo.';
 
--- Regla de negocio entre rol, recinto y unidad (no se puede expresar con un CHECK simple)
-CREATE OR REPLACE FUNCTION fn_validar_usuario()
+-- ---------------------------------------------------------------------
+-- 5. usuario_recinto (vínculo de un usuario con uno o más recintos)
+-- ---------------------------------------------------------------------
+CREATE TABLE usuario_recinto (
+  id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  usuario_id INTEGER NOT NULL REFERENCES usuarios (id) ON DELETE CASCADE,
+  recinto_id INTEGER NOT NULL REFERENCES recintos (id) ON DELETE RESTRICT,
+  unidad_id  INTEGER REFERENCES unidades (id) ON DELETE RESTRICT,
+  activo     BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_usuario_recinto UNIQUE (usuario_id, recinto_id)
+);
+
+CREATE INDEX idx_usuario_recinto_recinto ON usuario_recinto (recinto_id);
+CREATE INDEX idx_usuario_recinto_unidad ON usuario_recinto (unidad_id);
+
+COMMENT ON TABLE usuario_recinto IS 'Vincula a un usuario con cada recinto donde participa. Un propietario o un guardia puede estar en más de un recinto; el administrador de plataforma no se vincula a ninguno.';
+COMMENT ON COLUMN usuario_recinto.unidad_id IS 'Unidad del propietario en ese recinto. Obligatoria para propietarios y vacía para los demás roles.';
+COMMENT ON COLUMN usuario_recinto.activo IS 'Desactivar el vínculo quita el acceso a ese recinto sin afectar los demás recintos del usuario.';
+
+-- Reglas entre rol, recinto y unidad (no se pueden expresar con un CHECK simple)
+CREATE OR REPLACE FUNCTION fn_validar_usuario_recinto()
 RETURNS TRIGGER AS $$
 DECLARE
   v_rol TEXT;
   v_recinto_unidad INTEGER;
 BEGIN
-  SELECT nombre INTO v_rol FROM roles WHERE id = NEW.rol_id;
+  SELECT r.nombre INTO v_rol FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = NEW.usuario_id;
 
-  IF v_rol = 'admin_plataforma' AND NEW.recinto_id IS NOT NULL THEN
-    RAISE EXCEPTION 'Un admin_plataforma no debe tener recinto asignado';
+  IF v_rol = 'admin_plataforma' THEN
+    RAISE EXCEPTION 'El administrador de plataforma no se vincula a recintos';
   END IF;
 
-  IF v_rol <> 'admin_plataforma' AND NEW.recinto_id IS NULL THEN
-    RAISE EXCEPTION 'El rol % requiere un recinto asignado', v_rol;
+  IF v_rol = 'propietario' AND NEW.unidad_id IS NULL THEN
+    RAISE EXCEPTION 'El propietario debe tener una unidad en el recinto';
   END IF;
 
   IF NEW.unidad_id IS NOT NULL THEN
@@ -134,7 +150,7 @@ BEGIN
     END IF;
     SELECT recinto_id INTO v_recinto_unidad FROM unidades WHERE id = NEW.unidad_id;
     IF v_recinto_unidad <> NEW.recinto_id THEN
-      RAISE EXCEPTION 'La unidad no pertenece al recinto del usuario';
+      RAISE EXCEPTION 'La unidad no pertenece al recinto';
     END IF;
   END IF;
 
@@ -142,12 +158,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_usuarios_validar
-  BEFORE INSERT OR UPDATE ON usuarios
-  FOR EACH ROW EXECUTE FUNCTION fn_validar_usuario();
+CREATE TRIGGER trg_usuario_recinto_validar
+  BEFORE INSERT OR UPDATE ON usuario_recinto
+  FOR EACH ROW EXECUTE FUNCTION fn_validar_usuario_recinto();
 
 -- ---------------------------------------------------------------------
--- 5. vehiculos
+-- 6. vehiculos
 -- ---------------------------------------------------------------------
 CREATE TABLE vehiculos (
   id             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -172,7 +188,7 @@ COMMENT ON TABLE vehiculos IS 'Vehículos autorizados de cada propietario. El pr
 COMMENT ON COLUMN vehiculos.patente IS 'Patente normalizada: mayúsculas, sin guiones ni espacios (ej. ABCD12).';
 
 -- ---------------------------------------------------------------------
--- 6. visitas
+-- 7. visitas
 -- ---------------------------------------------------------------------
 CREATE TABLE visitas (
   id               INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -200,7 +216,7 @@ COMMENT ON TABLE visitas IS 'Visitas programadas por los propietarios. Si traen 
 COMMENT ON COLUMN visitas.patente IS 'Patente del vehículo de la visita (opcional, normalizada).';
 
 -- ---------------------------------------------------------------------
--- 7. dispositivos (Raspberry Pi)
+-- 8. dispositivos (Raspberry Pi)
 -- ---------------------------------------------------------------------
 CREATE TABLE dispositivos (
   id                    INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -225,7 +241,7 @@ COMMENT ON COLUMN dispositivos.api_key_hash IS 'Hash bcrypt de la API key del di
 COMMENT ON COLUMN dispositivos.ultimo_heartbeat IS 'Última señal de vida recibida; sirve para detectar equipos sin conexión.';
 
 -- ---------------------------------------------------------------------
--- 8. camaras
+-- 9. camaras
 -- ---------------------------------------------------------------------
 CREATE TABLE camaras (
   id             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -249,7 +265,7 @@ COMMENT ON TABLE camaras IS 'Cámaras IP que capturan los vehículos. Cada una s
 COMMENT ON COLUMN camaras.url_stream IS 'URL RTSP/HTTP del video de la cámara.';
 
 -- ---------------------------------------------------------------------
--- 9. accesos
+-- 10. accesos
 -- ---------------------------------------------------------------------
 CREATE TABLE accesos (
   id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -290,7 +306,35 @@ COMMENT ON COLUMN accesos.resultado IS 'autorizado (vehículo registrado), visit
 COMMENT ON COLUMN accesos.detalle_autorizacion IS 'Justificación obligatoria cuando un guardia autoriza manualmente.';
 
 -- ---------------------------------------------------------------------
--- 10. notificaciones
+-- 11. alertas (gestión de los ingresos no autorizados)
+-- ---------------------------------------------------------------------
+CREATE TABLE alertas (
+  id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  recinto_id  INTEGER NOT NULL REFERENCES recintos (id) ON DELETE RESTRICT,
+  acceso_id   BIGINT NOT NULL UNIQUE REFERENCES accesos (id) ON DELETE CASCADE,
+  estado      VARCHAR(10) NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'atendida')),
+  decision    VARCHAR(12) CHECK (decision IN ('autorizado', 'rechazado')),
+  guardia_id  INTEGER REFERENCES usuarios (id) ON DELETE RESTRICT,
+  detalle     TEXT,
+  atendida_at TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Una alerta atendida registra quién decidió y qué; autorizar exige un detalle
+  CONSTRAINT ck_alertas_gestion CHECK (
+    (estado = 'pendiente' AND decision IS NULL AND guardia_id IS NULL AND atendida_at IS NULL)
+    OR (estado = 'atendida' AND decision IS NOT NULL AND guardia_id IS NOT NULL AND atendida_at IS NOT NULL
+        AND (decision <> 'autorizado' OR LENGTH(TRIM(COALESCE(detalle, ''))) > 0))
+  )
+);
+
+CREATE INDEX idx_alertas_recinto_estado ON alertas (recinto_id, estado);
+CREATE INDEX idx_alertas_guardia ON alertas (guardia_id);
+
+COMMENT ON TABLE alertas IS 'Una alerta por cada acceso denegado. El guardia la atiende autorizando (con detalle obligatorio) o rechazando el ingreso.';
+COMMENT ON COLUMN alertas.estado IS 'pendiente: nadie la ha gestionado; atendida: el guardia tomó una decisión.';
+COMMENT ON COLUMN alertas.decision IS 'autorizado (ingreso permitido manualmente) o rechazado (ingreso denegado por el guardia).';
+
+-- ---------------------------------------------------------------------
+-- 12. notificaciones
 -- ---------------------------------------------------------------------
 CREATE TABLE notificaciones (
   id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -319,7 +363,7 @@ COMMENT ON COLUMN notificaciones.datos_anteriores IS 'Estado previo del registro
 COMMENT ON COLUMN notificaciones.datos_nuevos IS 'Estado nuevo del registro.';
 
 -- ---------------------------------------------------------------------
--- 11. sincronizaciones
+-- 13. sincronizaciones
 -- ---------------------------------------------------------------------
 CREATE TABLE sincronizaciones (
   id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -335,6 +379,53 @@ CREATE INDEX idx_sincronizaciones_dispositivo_fecha ON sincronizaciones (disposi
 COMMENT ON TABLE sincronizaciones IS 'Bitácora de cada sincronización de patentes autorizadas hacia una Raspberry Pi.';
 
 -- ---------------------------------------------------------------------
+-- 14. auditoria (bitácora inmutable)
+-- ---------------------------------------------------------------------
+CREATE TABLE auditoria (
+  id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  fecha            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  recinto_id       INTEGER REFERENCES recintos (id) ON DELETE RESTRICT,
+  actor_tipo       VARCHAR(12) NOT NULL CHECK (actor_tipo IN ('usuario', 'dispositivo', 'sistema')),
+  usuario_id       INTEGER REFERENCES usuarios (id) ON DELETE RESTRICT,
+  actor_nombre     VARCHAR(170),
+  actor_rol        VARCHAR(30),
+  accion           VARCHAR(20) NOT NULL CHECK (accion IN (
+                     'crear', 'editar', 'eliminar', 'activar', 'desactivar', 'vincular',
+                     'autorizar', 'rechazar', 'cancelar', 'regenerar_clave', 'consultar')),
+  entidad          VARCHAR(30) NOT NULL,
+  entidad_id       BIGINT,
+  datos_anteriores JSONB,
+  datos_nuevos     JSONB,
+  detalle          TEXT,
+  ip               VARCHAR(45)
+);
+
+CREATE INDEX idx_auditoria_recinto_fecha ON auditoria (recinto_id, fecha DESC);
+CREATE INDEX idx_auditoria_usuario ON auditoria (usuario_id);
+CREATE INDEX idx_auditoria_entidad ON auditoria (entidad, entidad_id);
+
+COMMENT ON TABLE auditoria IS 'Bitácora de cada creación, edición o eliminación en el sistema: quién, qué, cuándo y el detalle. No se puede editar ni eliminar.';
+COMMENT ON COLUMN auditoria.recinto_id IS 'Recinto donde ocurrió la acción. NULL para acciones de plataforma (recintos y administradores).';
+COMMENT ON COLUMN auditoria.actor_tipo IS 'usuario (persona en la web), dispositivo (Raspberry Pi) o sistema (tareas automáticas).';
+COMMENT ON COLUMN auditoria.actor_nombre IS 'Nombre del autor al momento de la acción (se conserva aunque luego cambie).';
+
+-- La bitácora es de solo inserción: cualquier intento de modificarla o borrarla falla
+CREATE OR REPLACE FUNCTION fn_auditoria_inmutable()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'La auditoría no se puede modificar ni eliminar';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_auditoria_inmutable
+  BEFORE UPDATE OR DELETE ON auditoria
+  FOR EACH ROW EXECUTE FUNCTION fn_auditoria_inmutable();
+
+CREATE TRIGGER trg_auditoria_sin_truncate
+  BEFORE TRUNCATE ON auditoria
+  FOR EACH STATEMENT EXECUTE FUNCTION fn_auditoria_inmutable();
+
+-- ---------------------------------------------------------------------
 -- Triggers: updated_at y normalización de patentes
 -- ---------------------------------------------------------------------
 CREATE TRIGGER trg_recintos_updated_at BEFORE UPDATE ON recintos
@@ -342,6 +433,8 @@ CREATE TRIGGER trg_recintos_updated_at BEFORE UPDATE ON recintos
 CREATE TRIGGER trg_unidades_updated_at BEFORE UPDATE ON unidades
   FOR EACH ROW EXECUTE FUNCTION fn_actualizar_updated_at();
 CREATE TRIGGER trg_usuarios_updated_at BEFORE UPDATE ON usuarios
+  FOR EACH ROW EXECUTE FUNCTION fn_actualizar_updated_at();
+CREATE TRIGGER trg_usuario_recinto_updated_at BEFORE UPDATE ON usuario_recinto
   FOR EACH ROW EXECUTE FUNCTION fn_actualizar_updated_at();
 CREATE TRIGGER trg_vehiculos_updated_at BEFORE UPDATE ON vehiculos
   FOR EACH ROW EXECUTE FUNCTION fn_actualizar_updated_at();
@@ -391,7 +484,8 @@ SELECT
   NULL::TIMESTAMPTZ       AS vigente_hasta
 FROM vehiculos v
 JOIN usuarios u ON u.id = v.propietario_id
-WHERE v.activo AND u.activo
+JOIN usuario_recinto ur ON ur.usuario_id = v.propietario_id AND ur.recinto_id = v.recinto_id
+WHERE v.activo AND u.activo AND ur.activo
 UNION ALL
 SELECT
   vi.recinto_id,
@@ -401,10 +495,13 @@ SELECT
   vi.id,
   vi.fecha_fin
 FROM visitas vi
+JOIN usuarios u ON u.id = vi.propietario_id
+JOIN usuario_recinto ur ON ur.usuario_id = vi.propietario_id AND ur.recinto_id = vi.recinto_id
 WHERE vi.patente IS NOT NULL
+  AND u.activo AND ur.activo
   AND vi.estado IN ('programada', 'activa')
   AND NOW() BETWEEN vi.fecha_inicio AND vi.fecha_fin;
 
-COMMENT ON VIEW vw_patentes_autorizadas IS 'Patentes autorizadas por recinto (vehículos activos y visitas vigentes). Es lo que se sincroniza con cada Raspberry Pi.';
+COMMENT ON VIEW vw_patentes_autorizadas IS 'Patentes autorizadas por recinto (vehículos activos de propietarios activos en ese recinto y visitas vigentes). Es lo que se sincroniza con cada Raspberry Pi.';
 
 COMMIT;

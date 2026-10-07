@@ -11,9 +11,12 @@ const { normalizarPatente } = require('../utils/patente');
 const { formatearRut } = require('../utils/rut');
 const { obtenerPaginacion, respuestaPaginada } = require('../utils/paginacion');
 const { notificarAdmins } = require('./notificaciones.service');
+const auditoria = require('./auditoria.service');
+const sincronizacion = require('./sincronizacion.service');
 
 const CAMPOS_EDITABLES = ['nombre_visitante', 'rut_visitante', 'patente', 'motivo', 'fecha_inicio', 'fecha_fin'];
-const DURACION_MAXIMA_DIAS = 30;
+// HU-28: el propietario autoriza visitas de hasta 24 horas; el admin de recinto puede dar más plazo
+const DURACION_MAXIMA_HORAS = { [ROLES.PROPIETARIO]: 24, [ROLES.ADMIN_RECINTO]: 30 * 24 };
 
 // El estado guardado puede quedar desactualizado con el paso del tiempo,
 // por eso se calcula el estado real según la hora actual.
@@ -31,7 +34,8 @@ const SQL_VISITAS = `
          un.identificador AS unidad
   FROM visitas vi
   JOIN usuarios p ON p.id = vi.propietario_id
-  LEFT JOIN unidades un ON un.id = p.unidad_id
+  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = vi.recinto_id
+  LEFT JOIN unidades un ON un.id = pur.unidad_id
 `;
 
 function filtrosDeAlcance(actor) {
@@ -83,14 +87,17 @@ async function obtener(actor, id) {
   return rows[0];
 }
 
-// Reglas de fechas: fin posterior al inicio, fin en el futuro y duración máxima
-function validarFechas(inicio, fin) {
+// Reglas de fechas: fin posterior al inicio, fin en el futuro y duración máxima según quién la programa
+function validarFechas(actor, inicio, fin) {
   const desde = new Date(inicio);
   const hasta = new Date(fin);
   if (hasta <= desde) throw new HttpError(400, 'La fecha de término debe ser posterior a la de inicio');
   if (hasta <= new Date()) throw new HttpError(400, 'La visita debe terminar en el futuro');
-  if (hasta - desde > DURACION_MAXIMA_DIAS * 86400000) {
-    throw new HttpError(400, `Una visita puede durar como máximo ${DURACION_MAXIMA_DIAS} días`);
+  const maximoHoras = DURACION_MAXIMA_HORAS[actor.rol] || 24;
+  if (hasta - desde > maximoHoras * 3600000) {
+    throw new HttpError(400, maximoHoras <= 24
+      ? 'Puedes autorizar una visita por un máximo de 24 horas. Si necesitas más tiempo, pídelo al administrador del recinto.'
+      : `Una visita puede durar como máximo ${maximoHoras / 24} días`);
   }
 }
 
@@ -101,13 +108,22 @@ function limpiar(datos) {
   return d;
 }
 
+// Datos de la visita que se guardan en la auditoría
+function resumen(v) {
+  return {
+    visitante: v.nombre_visitante, rut: v.rut_visitante, patente: v.patente, motivo: v.motivo,
+    desde: v.fecha_inicio, hasta: v.fecha_fin, estado: v.estado_actual, propietario: v.propietario_nombre,
+  };
+}
+
 // El admin de recinto puede programar visitas a nombre de un propietario activo de su recinto
 // (por ejemplo, si el propietario tiene dificultades para usar la plataforma).
 async function validarPropietario(recintoId, propietarioId) {
   if (!propietarioId) throw new HttpError(400, 'Debes indicar el propietario');
   const { rows } = await query(
-    `SELECT u.activo FROM usuarios u JOIN roles r ON r.id = u.rol_id
-     WHERE u.id = $1 AND u.recinto_id = $2 AND r.nombre = 'propietario'`,
+    `SELECT (u.activo AND ur.activo) AS activo
+     FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = u.rol_id
+     WHERE ur.usuario_id = $1 AND ur.recinto_id = $2 AND r.nombre = 'propietario'`,
     [propietarioId, recintoId]
   );
   if (!rows[0]) throw new HttpError(400, 'El propietario no pertenece a este recinto');
@@ -115,7 +131,7 @@ async function validarPropietario(recintoId, propietarioId) {
 }
 
 async function crear(actor, datos) {
-  validarFechas(datos.fecha_inicio, datos.fecha_fin);
+  validarFechas(actor, datos.fecha_inicio, datos.fecha_fin);
   const d = limpiar(datos);
 
   let propietarioId = actor.id;
@@ -131,6 +147,11 @@ async function crear(actor, datos) {
       d.motivo || null, d.fecha_inicio, d.fecha_fin]
   );
   const visita = await obtener(actor, rows[0].id);
+  await auditoria.registrar(actor, {
+    accion: 'crear', entidad: 'visitas', entidadId: visita.id, despues: resumen(visita),
+    detalle: `Visita de ${visita.nombre_visitante} para ${visita.propietario_nombre}`,
+  });
+  sincronizacion.notificarCambio(actor.recinto_id);
 
   // Si la registró el propio admin no tiene sentido notificarlo
   if (actor.rol !== ROLES.PROPIETARIO) return visita;
@@ -156,22 +177,43 @@ async function actualizar(actor, id, datos) {
   if (!['programada', 'activa'].includes(actual.estado_actual)) {
     throw new HttpError(400, 'Solo se pueden editar visitas programadas o en curso');
   }
-  validarFechas(datos.fecha_inicio || actual.fecha_inicio, datos.fecha_fin || actual.fecha_fin);
+  // Las fechas se validan solo si cambian (ej. el propietario puede corregir el motivo de una
+  // visita larga que programó el admin sin chocar con su límite de 24 horas)
+  const cambianFechas = ['fecha_inicio', 'fecha_fin'].some(
+    (c) => datos[c] && new Date(datos[c]).getTime() !== new Date(actual[c]).getTime()
+  );
+  if (cambianFechas) {
+    validarFechas(actor, datos.fecha_inicio || actual.fecha_inicio, datos.fecha_fin || actual.fecha_fin);
+  }
 
   const update = construirUpdate(limpiar(datos), CAMPOS_EDITABLES, 2);
   if (!update) throw new HttpError(400, 'No hay datos para actualizar');
   await query(`UPDATE visitas SET ${update.set} WHERE id = $1`, [id, ...update.valores]);
-  return obtener(actor, id);
+
+  const nueva = await obtener(actor, id);
+  await auditoria.registrar(actor, {
+    accion: 'editar', entidad: 'visitas', entidadId: id, antes: resumen(actual), despues: resumen(nueva),
+    detalle: `Visita de ${nueva.nombre_visitante} para ${nueva.propietario_nombre}`,
+  });
+  sincronizacion.notificarCambio(actual.recinto_id);
+  return nueva;
 }
 
-// Al cancelarla, su patente deja de estar autorizada de inmediato
+// Al cancelarla, su patente deja de estar autorizada de inmediato (el registro se conserva, HU-29)
 async function cancelar(actor, id) {
   const actual = await obtener(actor, id);
   if (['finalizada', 'cancelada'].includes(actual.estado_actual)) {
     throw new HttpError(400, 'La visita ya terminó o fue cancelada');
   }
   await query("UPDATE visitas SET estado = 'cancelada' WHERE id = $1", [id]);
-  return obtener(actor, id);
+
+  const nueva = await obtener(actor, id);
+  await auditoria.registrar(actor, {
+    accion: 'cancelar', entidad: 'visitas', entidadId: id, antes: resumen(actual), despues: resumen(nueva),
+    detalle: `Visita de ${nueva.nombre_visitante} para ${nueva.propietario_nombre}`,
+  });
+  sincronizacion.notificarCambio(actual.recinto_id);
+  return nueva;
 }
 
 module.exports = { listar, obtener, crear, actualizar, cancelar };

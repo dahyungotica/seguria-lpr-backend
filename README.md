@@ -10,7 +10,9 @@ API REST y servidor de tiempo real de **SegurIA-LPR**, sistema de control de acc
 
 ## Documentación
 
-`documentation/SegurIA-LPR_Presentacion_Plataforma.docx`: documento de presentación de la plataforma (qué es, cómo funciona, roles y recorrido por cada pantalla). Es el mismo documento que está en el repositorio del frontend.
+`documentation/SegurIA-LPR_Presentacion_Plataforma.docx`: documento de presentación de la plataforma (qué es, cómo funciona, roles y recorrido por cada pantalla).
+`documentation/SegurIA-LPR_MER_final.png`: MER final con los cambios respecto al MER original (detalle en [docs/MER.md](docs/MER.md)).
+Ambos archivos están también en el repositorio del frontend.
 
 ## Estructura
 
@@ -69,6 +71,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `npm run db:reset` | **Borra todo**, recrea el esquema y carga los datos de prueba. Bloqueado si `NODE_ENV=production`. |
 | `npm run db:limpiar` | **Borra todo** y deja solo los roles y la cuenta `admin@seguria-lpr.cl`. Útil para empezar pruebas desde cero. |
 | `npm run simular -- --id <ID> --key <API_KEY> --camara <ID> [--patente ABCD12]` | Simula una Raspberry Pi enviando una detección (ver más abajo). |
+| `npm run escuchar -- --id <ID> --key <API_KEY>` | Se conecta como una Raspberry Pi y muestra la sincronización de patentes en tiempo real (HU-36). |
 
 El modelo está documentado en [docs/MER.md](docs/MER.md).
 
@@ -111,18 +114,19 @@ curl http://localhost:3000/api/auth/me -H "Authorization: Bearer <token>"
 | Módulo | Rutas | Quién | Estado |
 |---|---|---|---|
 | Salud | `GET /api/health` | público | ✅ |
-| Auth | `POST /auth/login`, `GET /auth/me` | público / token | ✅ |
+| Auth | `POST /auth/login`, `POST /auth/recinto` `{ recinto_id }` (elegir o cambiar recinto), `GET /auth/me` | público / token | ✅ |
 | Recintos | `GET/POST /recintos`, `GET/PUT /recintos/:id`, `PATCH /recintos/:id/estado` | admin_plataforma (admin_recinto solo ve el suyo) | ✅ |
 | Usuarios | `GET/POST /usuarios`, `GET/PUT /usuarios/:id`, `PATCH /usuarios/:id/estado` | plataforma → admins de recinto · recinto → propietarios y guardias · guardia → solo lectura de propietarios | ✅ |
 | Unidades | `GET/POST /unidades`, `GET/PUT/DELETE /unidades/:id` | admin_recinto (guardia lectura) | ✅ |
 | Cámaras | `GET/POST /camaras`, `GET/PUT/DELETE /camaras/:id` | admin_recinto (guardia lectura) | ✅ |
 | Dispositivos | `GET/POST /dispositivos`, `GET/PUT/DELETE /dispositivos/:id`, `POST /dispositivos/:id/api-key` | admin_recinto | ✅ |
-| Accesos | `GET /accesos` (filtros + paginación), `GET /accesos/:id`, `GET /accesos/estadisticas` | admin_recinto, guardia, propietario (solo los suyos) | ✅ |
+| Accesos | `GET /accesos` (filtros: fechas, patente, resultado, cámara, sentido, `alerta`, `recinto_id`), `GET /accesos/:id`, `GET /accesos/estadisticas` | admin_plataforma (todos los recintos, consulta auditada, HU-23), admin_recinto, guardia, propietario (solo los suyos) | ✅ |
 | Notificaciones | `GET /notificaciones`, `GET /notificaciones/no-leidas`, `PATCH /notificaciones/:id/leida`, `PATCH /notificaciones/leer-todas` | admin_recinto | ✅ |
 | Vehículos | `GET/POST /vehiculos` (`?propietario_id=`), `GET/PUT/DELETE /vehiculos/:id` | propietario (los suyos, sin aprobación; notifica al admin) · admin_recinto (a nombre de un propietario, con `propietario_id`) · guardia (lectura) | ✅ |
 | Visitas | `GET/POST /visitas` (`?vigencia=proximas\|pasadas\|hoy`, `?propietario_id=`), `GET/PUT /visitas/:id`, `PATCH /visitas/:id/cancelar` | propietario · admin_recinto (a nombre de un propietario, con `propietario_id`) · guardia (lectura) | ✅ |
-| Autorización manual | `POST /accesos/:id/autorizar` `{ detalle_autorizacion }` | guardia (solo accesos denegados) | ✅ |
-| Raspberry Pi | `POST /dispositivos/equipo/heartbeat`, `GET /dispositivos/equipo/patentes`, `POST /dispositivos/equipo/accesos` | dispositivo (headers `X-Dispositivo-Id` y `X-API-Key`) | ✅ |
+| Gestión de alertas (HU-31) | `POST /accesos/:id/autorizar` `{ detalle_autorizacion }`, `POST /accesos/:id/rechazar` `{ detalle? }` | guardia (solo alertas pendientes) | ✅ |
+| Auditoría (HU-5) | `GET /auditoria` (filtros: autor, entidad, acción, fechas, `recinto_id` o `plataforma`) | admin_recinto (su recinto), admin_plataforma (todo) | ✅ |
+| Raspberry Pi | `POST /dispositivos/equipo/heartbeat`, `GET /dispositivos/equipo/patentes`, `POST /dispositivos/equipo/accesos` y Socket.io `/dispositivos` (HU-36) | dispositivo (`X-Dispositivo-Id` + `X-API-Key`) | ✅ |
 
 Notas:
 - Todas las rutas (salvo health y login) van bajo `/api` y requieren `Authorization: Bearer <token>`.
@@ -137,6 +141,20 @@ Notas:
 `POST /api/dispositivos/equipo/accesos` recibe `{ camara_id, patente, confianza_ocr, imagen_base64 | imagen_url, fecha_hora? }`.
 El servidor decide el resultado con `vw_patentes_autorizadas` (vehículo activo → `autorizado`, visita vigente → `visita`, otro → `denegado`),
 sube la imagen a Cloudinary (carpeta `seguria-lpr/capturas`), guarda solo la URL, la emite por Socket.io (`acceso:nuevo`) y, si fue denegado, notifica al administrador.
+
+### Varios recintos por usuario (HU-19, HU-20, HU-22)
+
+El vínculo usuario-recinto está en la tabla `usuario_recinto`. Si al crear un propietario, guardia o administrador
+el email ya existe con el mismo rol y RUT, la persona se **vincula** al nuevo recinto (no se pide contraseña).
+Quien pertenece a varios recintos inicia sesión con `requiere_seleccion: true` y elige con `POST /api/auth/recinto`;
+el token queda asociado a ese recinto. Desactivar a alguien solo afecta su acceso a ese recinto, y tiene efecto
+inmediato: cada petición verifica que la cuenta y el vínculo sigan activos.
+
+### Capturas privadas (HU-32)
+
+Las capturas se suben a Cloudinary como `authenticated`: la URL guardada en la BD no permite verlas por sí sola,
+y la API entrega una URL firmada solo a quien puede ver ese acceso. Una tarea automática (al iniciar y cada 6 horas)
+elimina de Cloudinary las capturas con más de 60 días; el acceso se conserva y la eliminación queda en la auditoría.
 
 ### Simular una detección (sin Raspberry Pi)
 
@@ -154,7 +172,13 @@ Los permisos de cada ruta están en `src/routes/*.routes.js` y el alcance por ro
 
 El cliente se conecta con `io(URL, { auth: { token } })`. Cada socket se une a las rooms `recinto:<id>`, `rol:<nombre>`, `recinto:<id>:<rol>` y `usuario:<id>`.
 
-Eventos: `acceso:nuevo`, `vehiculo:cambio`, `notificacion:nueva` (funciones para emitirlos en `src/sockets/index.js`).
+Eventos para la web: `acceso:nuevo`, `acceso:actualizado` (alerta atendida), `vehiculo:cambio`, `notificacion:nueva`.
+
+**Sincronización de las Raspberry Pi (HU-36):** el equipo se conecta al espacio `/dispositivos` con
+`io(URL + '/dispositivos', { auth: { identificador, api_key } })` y recibe `patentes:completa` (lista completa al conectarse
+o al enviar `patentes:solicitar`) y `patentes:cambios` (`{ altas, bajas }`) ante cada alta, edición, desactivación,
+cancelación o expiración. Para verlo funcionar: `npm run escuchar -- --id <IDENTIFICADOR> --key <API_KEY>`.
+Guardar la copia local en disco (para que sobreviva a un reinicio) es parte del programa de la Raspberry Pi.
 
 ## Deploy en Render
 

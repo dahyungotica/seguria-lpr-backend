@@ -8,6 +8,8 @@ const ROLES = require('../utils/roles');
 const { construirUpdate, Filtros } = require('../utils/sql');
 const { normalizarPatente } = require('../utils/patente');
 const { notificarAdmins } = require('./notificaciones.service');
+const auditoria = require('./auditoria.service');
+const sincronizacion = require('./sincronizacion.service');
 const { emitirVehiculoCambio } = require('../sockets');
 
 const CAMPOS_EDITABLES = ['patente', 'marca', 'modelo', 'color', 'tipo', 'activo'];
@@ -18,7 +20,8 @@ const SQL_VEHICULOS = `
   SELECT v.*, p.nombre || ' ' || p.apellido AS propietario_nombre, un.identificador AS unidad
   FROM vehiculos v
   JOIN usuarios p ON p.id = v.propietario_id
-  LEFT JOIN unidades un ON un.id = p.unidad_id
+  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = v.recinto_id
+  LEFT JOIN unidades un ON un.id = pur.unidad_id
 `;
 
 function filtrosDeAlcance(actor) {
@@ -52,8 +55,18 @@ function resumen(vehiculo) {
 }
 
 // Avisa al administrador (notificación + tiempo real) cuando el cambio lo hace el propietario
+const ACCION_AUDITORIA = { vehiculo_creado: 'crear', vehiculo_editado: 'editar', vehiculo_eliminado: 'eliminar' };
+
 async function avisarCambio(actor, tipo, verbo, anterior, nuevo) {
   const vehiculo = nuevo || anterior;
+  // Toda alta, edición o eliminación queda en la auditoría, la haga el propietario o el admin (HU-5 / HU-27)
+  await auditoria.registrar(actor, {
+    accion: ACCION_AUDITORIA[tipo], entidad: 'vehiculos', entidadId: vehiculo.id, recintoId: vehiculo.recinto_id,
+    antes: anterior ? resumen(anterior) : null, despues: nuevo ? resumen(nuevo) : null,
+    detalle: `${verbo[0].toUpperCase() + verbo.slice(1)} el vehículo ${vehiculo.patente} de ${vehiculo.propietario_nombre}`,
+  });
+  // La copia local de las Raspberry Pi se actualiza (HU-36)
+  sincronizacion.notificarCambio(vehiculo.recinto_id);
   emitirVehiculoCambio(vehiculo.recinto_id, { tipo, vehiculo });
   if (actor.rol !== ROLES.PROPIETARIO) return;
 
@@ -75,11 +88,12 @@ async function crear(actor, datos) {
   if (actor.rol === ROLES.ADMIN_RECINTO) {
     if (!datos.propietario_id) throw new HttpError(400, 'Debes indicar el propietario');
     const { rows } = await query(
-      `SELECT 1 FROM usuarios u JOIN roles r ON r.id = u.rol_id
-       WHERE u.id = $1 AND u.recinto_id = $2 AND r.nombre = 'propietario'`,
+      `SELECT ur.activo FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = u.rol_id
+       WHERE ur.usuario_id = $1 AND ur.recinto_id = $2 AND r.nombre = 'propietario'`,
       [datos.propietario_id, actor.recinto_id]
     );
     if (!rows[0]) throw new HttpError(400, 'El propietario no pertenece a este recinto');
+    if (!rows[0].activo) throw new HttpError(400, 'El propietario está desactivado en este recinto');
     propietarioId = datos.propietario_id;
   }
 

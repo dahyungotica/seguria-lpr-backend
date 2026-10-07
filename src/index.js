@@ -8,8 +8,12 @@ const app = require('./app');
 const { iniciarSockets } = require('./sockets');
 const { pool } = require('./config/db');
 
+const { iniciarTareaRetencion } = require('./services/retencion.service');
+
 const servidor = http.createServer(app);
 iniciarSockets(servidor);
+// HU-32: elimina automáticamente las capturas con más de 60 días
+if (pool) iniciarTareaRetencion();
 
 servidor.listen(env.PORT, () => {
   console.log(`🚗 SegurIA-LPR API escuchando en el puerto ${env.PORT} (${env.NODE_ENV})`);

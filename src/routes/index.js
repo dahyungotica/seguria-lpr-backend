@@ -28,5 +28,6 @@ router.use('/camaras', require('./camaras.routes'));
 router.use('/dispositivos', require('./dispositivos.routes'));
 router.use('/accesos', require('./accesos.routes'));
 router.use('/notificaciones', require('./notificaciones.routes'));
+router.use('/auditoria', require('./auditoria.routes'));
 
 module.exports = router;

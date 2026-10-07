@@ -1,4 +1,4 @@
-// Historial de accesos y autorización manual por parte del guardia
+// Historial de accesos y gestión de alertas por parte del guardia
 const { Router } = require('express');
 const { body, query } = require('express-validator');
 const autenticar = require('../middlewares/auth');
@@ -9,7 +9,8 @@ const v = require('../utils/validaciones');
 const controller = require('../controllers/accesos.controller');
 
 const router = Router();
-const LECTORES = [ROLES.ADMIN_RECINTO, ROLES.GUARDIA, ROLES.PROPIETARIO];
+// El admin de plataforma consulta los accesos de todos los recintos (HU-23)
+const LECTORES = [ROLES.ADMIN_PLATAFORMA, ROLES.ADMIN_RECINTO, ROLES.GUARDIA, ROLES.PROPIETARIO];
 
 const filtrosHistorial = [
   ...v.paginacionQuery,
@@ -19,6 +20,8 @@ const filtrosHistorial = [
   query('resultado').optional({ values: 'falsy' }).isIn(['autorizado', 'denegado', 'autorizado_manual', 'visita']),
   query('sentido').optional({ values: 'falsy' }).isIn(['entrada', 'salida']),
   query('camara_id').optional({ values: 'falsy' }).isInt({ min: 1 }).toInt(),
+  query('recinto_id').optional({ values: 'falsy' }).isInt({ min: 1 }).toInt(),
+  query('alerta').optional({ values: 'falsy' }).isIn(['pendiente', 'atendida']),
 ];
 
 router.use(autenticar);
@@ -27,7 +30,8 @@ router.get('/', permitirRoles(...LECTORES), filtrosHistorial, validar, controlle
 router.get('/estadisticas', permitirRoles(ROLES.ADMIN_RECINTO), controller.estadisticas);
 router.get('/:id', permitirRoles(...LECTORES), v.idParam, validar, controller.obtener);
 
-// El guardia autoriza un ingreso no autorizado: el detalle es obligatorio
+// HU-31: el guardia atiende la alerta de un ingreso no autorizado
+// Autorizar: el detalle es obligatorio
 router.post(
   '/:id/autorizar',
   permitirRoles(ROLES.GUARDIA),
@@ -41,6 +45,14 @@ router.post(
   ],
   validar,
   controller.autorizarManual
+);
+// Rechazar: el detalle es opcional
+router.post(
+  '/:id/rechazar',
+  permitirRoles(ROLES.GUARDIA),
+  [v.idParam, v.textoOpcional('detalle', 'El detalle', 500)],
+  validar,
+  controller.rechazar
 );
 
 module.exports = router;
