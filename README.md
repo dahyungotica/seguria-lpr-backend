@@ -67,7 +67,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `npm run db:init` | Crea tablas, triggers y vistas (`sql/schema.sql`). Si ya existen, no hace nada. |
 | `npm run db:seed` | Carga datos de prueba (roles, recinto, unidades, cámara, dispositivo, usuarios, vehículos, accesos). |
 | `npm run db:reset` | **Borra todo**, recrea el esquema y carga los datos de prueba. Bloqueado si `NODE_ENV=production`. |
-| `npm run db:limpiar` | **Borra todo** y deja solo los roles y la cuenta `admin@seguria.cl`. Útil para empezar pruebas desde cero. |
+| `npm run db:limpiar` | **Borra todo** y deja solo los roles y la cuenta `admin@seguria-lpr.cl`. Útil para empezar pruebas desde cero. |
 | `npm run simular -- --id <ID> --key <API_KEY> --camara <ID> [--patente ABCD12]` | Simula una Raspberry Pi enviando una detección (ver más abajo). |
 
 El modelo está documentado en [docs/MER.md](docs/MER.md).
@@ -87,12 +87,12 @@ Verificar: <http://localhost:3000/api/health> → `{ "ok": true, "db": "<hora de
 
 | Rol | Email | Contraseña |
 |---|---|---|
-| Administrador de plataforma | `admin@seguria.cl` | `Seguria2026!` |
+| Administrador de plataforma | `admin@seguria-lpr.cl` | `Seguria2026!` |
 | Administrador de recinto | `recinto@seguria.cl` | `Seguria2026!` |
 | Propietario | `propietario@seguria.cl` | `Seguria2026!` |
 | Guardia | `guardia@seguria.cl` | `Seguria2026!` |
 
-Si la base se dejó limpia con `npm run db:limpiar`, solo existe `admin@seguria.cl`; el resto de las cuentas se crean desde la aplicación.
+Si la base se dejó limpia con `npm run db:limpiar`, solo existe `admin@seguria-lpr.cl`; el resto de las cuentas se crean desde la aplicación.
 
 El seed también imprime en consola la API key del dispositivo de prueba `RPI-AROMOS-01` (solo se guarda su hash).
 

@@ -4,6 +4,9 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { conectar } = require('./conexion');
 
+// Cuenta del administrador de plataforma (superadmin), la única que existe en una base limpia
+const EMAIL_SUPERADMIN = 'admin@seguria-lpr.cl';
+
 // Contraseña común de los usuarios de prueba. NO usar en producción.
 const PASSWORD_PRUEBA = 'Seguria2026!';
 
@@ -57,11 +60,11 @@ async function insertarNotificacionesDemo(cliente, { recintoId, adminRecintoId, 
   }
 }
 
-// soloAdmin = true: crea únicamente los roles y la cuenta admin@seguria.cl (base "limpia")
+// soloAdmin = true: crea únicamente los roles y la cuenta del superadmin (base "limpia")
 async function seed(cliente, { soloAdmin = false } = {}) {
   // Si ya existen los usuarios de prueba, no se duplica nada
   const { rows: existentes } = await cliente.query(
-    "SELECT 1 FROM usuarios WHERE email = 'admin@seguria.cl'"
+    'SELECT 1 FROM usuarios WHERE email = $1', [EMAIL_SUPERADMIN]
   );
   if (existentes.length > 0) {
     console.log('ℹ️  Los datos de prueba ya existen. Para recargarlos usa: npm run db:reset');
@@ -96,10 +99,10 @@ async function seed(cliente, { soloAdmin = false } = {}) {
     if (soloAdmin) {
       await insertar(cliente, 'usuarios', {
         password_hash: passwordHash, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
-        email: 'admin@seguria.cl', rol_id: roles.admin_plataforma, recinto_id: null,
+        email: EMAIL_SUPERADMIN, rol_id: roles.admin_plataforma, recinto_id: null,
       });
       await cliente.query('COMMIT');
-      console.log(`✅ Base limpia: solo roles y admin@seguria.cl (contraseña: ${PASSWORD_PRUEBA})`);
+      console.log(`✅ Base limpia: solo roles y ${EMAIL_SUPERADMIN} (contraseña: ${PASSWORD_PRUEBA})`);
       return;
     }
 
@@ -143,7 +146,7 @@ async function seed(cliente, { soloAdmin = false } = {}) {
     const usuarioBase = { password_hash: passwordHash };
     await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
-      email: 'admin@seguria.cl', rol_id: roles.admin_plataforma, recinto_id: null,
+      email: EMAIL_SUPERADMIN, rol_id: roles.admin_plataforma, recinto_id: null,
     });
     const adminRecintoId = await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '22222222-2', nombre: 'Rodrigo', apellido: 'Recinto',
@@ -209,7 +212,7 @@ async function seed(cliente, { soloAdmin = false } = {}) {
   }
 
   console.log('✅ Datos de prueba cargados.');
-  console.log(`   Usuarios: admin@, recinto@, propietario@, guardia@seguria.cl  (contraseña: ${PASSWORD_PRUEBA})`);
+  console.log(`   Usuarios: ${EMAIL_SUPERADMIN}, recinto@, propietario@, guardia@seguria.cl  (contraseña: ${PASSWORD_PRUEBA})`);
   console.log(`   API key del dispositivo RPI-AROMOS-01 (solo se muestra ahora): ${apiKeyDispositivo}`);
 }
 
