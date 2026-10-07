@@ -20,7 +20,7 @@ const SQL_VEHICULOS = `
   SELECT v.*, p.nombre || ' ' || p.apellido AS propietario_nombre, un.identificador AS unidad
   FROM vehiculos v
   JOIN usuarios p ON p.id = v.propietario_id
-  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = v.recinto_id
+  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = v.recinto_id AND pur.unidad_id IS NOT NULL
   LEFT JOIN unidades un ON un.id = pur.unidad_id
 `;
 
@@ -88,7 +88,7 @@ async function crear(actor, datos) {
   if (actor.rol === ROLES.ADMIN_RECINTO) {
     if (!datos.propietario_id) throw new HttpError(400, 'Debes indicar el propietario');
     const { rows } = await query(
-      `SELECT ur.activo FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = u.rol_id
+      `SELECT ur.activo FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = ur.rol_id
        WHERE ur.usuario_id = $1 AND ur.recinto_id = $2 AND r.nombre = 'propietario'`,
       [datos.propietario_id, actor.recinto_id]
     );

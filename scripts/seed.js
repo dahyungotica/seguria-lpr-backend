@@ -81,8 +81,7 @@ async function seed(cliente, { soloAdmin = false } = {}) {
     // 1. Roles
     const roles = {};
     const listaRoles = [
-      ['admin_plataforma', 'Administra la plataforma: crea recintos y sus administradores'],
-      ['admin_recinto', 'Administra un recinto: propietarios, cámaras, equipos e historial'],
+      ['admin_recinto', 'Administra un recinto: personas, cámaras, equipos e historial'],
       ['propietario', 'Residente o usuario autorizado: gestiona sus vehículos y visitas'],
       ['guardia', 'Monitorea accesos en vivo y puede autorizar ingresos manualmente'],
     ];
@@ -99,7 +98,7 @@ async function seed(cliente, { soloAdmin = false } = {}) {
     if (soloAdmin) {
       await insertar(cliente, 'usuarios', {
         password_hash: passwordHash, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
-        email: EMAIL_SUPERADMIN, rol_id: roles.admin_plataforma,
+        email: EMAIL_SUPERADMIN, es_admin_plataforma: true,
       });
       await cliente.query('COMMIT');
       console.log(`✅ Base limpia: solo roles y ${EMAIL_SUPERADMIN} (contraseña: ${PASSWORD_PRUEBA})`);
@@ -146,26 +145,25 @@ async function seed(cliente, { soloAdmin = false } = {}) {
     const usuarioBase = { password_hash: passwordHash };
     await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
-      email: EMAIL_SUPERADMIN, rol_id: roles.admin_plataforma,
+      email: EMAIL_SUPERADMIN, es_admin_plataforma: true,
     });
     const adminRecintoId = await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '22222222-2', nombre: 'Rodrigo', apellido: 'Recinto',
-      email: 'recinto@seguria.cl', rol_id: roles.admin_recinto,
+      email: 'recinto@seguria.cl',
     });
     const propietarioId = await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '33333333-3', nombre: 'Patricia', apellido: 'Propietaria',
       email: 'propietario@seguria.cl', telefono: '+56 9 1234 5678',
-      rol_id: roles.propietario,
     });
     const guardiaId = await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '44444444-4', nombre: 'Gonzalo', apellido: 'Guardia',
-      email: 'guardia@seguria.cl', rol_id: roles.guardia,
+      email: 'guardia@seguria.cl',
     });
 
-    // Vínculo de cada usuario con el recinto (el superadmin no se vincula; la unidad solo aplica al propietario)
-    await insertar(cliente, 'usuario_recinto', { usuario_id: adminRecintoId, recinto_id: recintoId });
-    await insertar(cliente, 'usuario_recinto', { usuario_id: propietarioId, recinto_id: recintoId, unidad_id: depto304 });
-    await insertar(cliente, 'usuario_recinto', { usuario_id: guardiaId, recinto_id: recintoId });
+    // Rol de cada usuario en el recinto (el superadmin no se vincula; la unidad solo aplica al propietario)
+    await insertar(cliente, 'usuario_recinto', { usuario_id: adminRecintoId, recinto_id: recintoId, rol_id: roles.admin_recinto });
+    await insertar(cliente, 'usuario_recinto', { usuario_id: propietarioId, recinto_id: recintoId, rol_id: roles.propietario, unidad_id: depto304 });
+    await insertar(cliente, 'usuario_recinto', { usuario_id: guardiaId, recinto_id: recintoId, rol_id: roles.guardia });
 
     // 5. Vehículos del propietario (la BD normaliza la patente: "GH-JK-12" -> "GHJK12")
     const vehiculo1 = await insertar(cliente, 'vehiculos', {

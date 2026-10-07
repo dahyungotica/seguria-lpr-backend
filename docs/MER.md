@@ -5,8 +5,8 @@ original de la HU-6: [`documentation/SegurIA-LPR_MER_final.png`](../documentatio
 
 ```mermaid
 erDiagram
-    roles ||--o{ usuarios : "asigna rol"
-    usuarios ||--o{ usuario_recinto : "participa en"
+    usuarios ||--o{ usuario_recinto : "tiene roles en"
+    roles ||--o{ usuario_recinto : "rol en el recinto"
     recintos ||--o{ usuario_recinto : "vincula"
     unidades |o--o{ usuario_recinto : "unidad del propietario"
     recintos ||--o{ unidades : "contiene"
@@ -65,7 +65,7 @@ erDiagram
         varchar email UK
         varchar password_hash
         varchar telefono
-        int rol_id FK
+        bool es_admin_plataforma
         bool activo
         timestamptz ultimo_login
         timestamptz created_at
@@ -74,7 +74,8 @@ erDiagram
     usuario_recinto {
         int id PK
         int usuario_id FK,UK
-        int recinto_id FK
+        int recinto_id FK,UK
+        int rol_id FK,UK
         int unidad_id FK
         bool activo
         timestamptz created_at
@@ -205,11 +206,11 @@ erDiagram
 
 | Tabla | Descripción |
 |---|---|
-| **roles** | Los 4 roles del sistema (admin_plataforma, admin_recinto, propietario, guardia). Cada usuario tiene uno. |
+| **roles** | Roles que se asignan dentro de un recinto: admin_recinto, guardia y propietario. Una persona puede tener varios (en `usuario_recinto`). |
 | **recintos** | Lugares controlados (condominio, empresa, estacionamiento). Se desactivan en vez de borrarse; un recinto inactivo bloquea el ingreso de sus usuarios. |
 | **unidades** | Departamentos, casas u oficinas de un recinto. El identificador es único dentro del recinto. |
-| **usuarios** | Cuentas de las personas (contraseña con hash bcrypt). No guardan el recinto: eso está en `usuario_recinto`. |
-| **usuario_recinto** | Vínculo de un usuario con cada recinto donde participa, con su unidad (solo propietarios) y su estado en ese recinto. Permite propietarios y guardias en varios recintos (HU-19, HU-20). El admin de plataforma no se vincula (HU-22). Un trigger valida rol, unidad y recinto. |
+| **usuarios** | Una cuenta por persona (un email, un RUT y una contraseña con hash bcrypt). No guarda roles ni recintos: eso está en `usuario_recinto`. `es_admin_plataforma` marca al administrador de plataforma. |
+| **usuario_recinto** | Roles de cada persona en cada recinto: una fila por recinto + rol, con la unidad (solo en el rol propietario) y su estado. Así una misma cuenta puede administrar 3 recintos, ser guardia en 2 y propietaria en 1, y al iniciar sesión elige con qué perfil entrar (HU-19, HU-20). Único: (usuario, recinto, rol). El admin de plataforma no se vincula (HU-22). Un trigger valida rol, unidad y recinto. |
 | **vehiculos** | Vehículos de cada propietario en un recinto. Patente normalizada y única por recinto. |
 | **visitas** | Visitas con ventana horaria: hasta 24 h si las programa el propietario, hasta 30 días el admin (HU-28). Si traen patente, queda autorizada mientras estén vigentes. |
 | **dispositivos** | Raspberry Pi de cada recinto (API key con hash, último heartbeat y última sincronización). Un equipo atiende varias cámaras. |
@@ -224,14 +225,14 @@ erDiagram
 
 - **`fn_actualizar_updated_at()`** + triggers `trg_*_updated_at`: actualizan `updated_at` en cada UPDATE.
 - **`fn_normalizar_patente()`** + triggers: guardan las patentes en mayúsculas y sin guiones ni espacios.
-- **`fn_validar_usuario_recinto()`**: valida rol, recinto y unidad de cada vínculo.
+- **`fn_validar_usuario_recinto()`**: impide vincular al admin de plataforma, exige unidad en el rol propietario (y solo en ese rol) y que la unidad sea del mismo recinto.
 - **`fn_auditoria_inmutable()`**: impide `UPDATE`, `DELETE` y `TRUNCATE` sobre `auditoria`.
 - **`vw_patentes_autorizadas`**: vehículos activos de propietarios activos en el recinto + visitas vigentes. Es lo que se sincroniza con cada Raspberry Pi.
 
 ## Cambios respecto al MER original (HU-6)
 
-- **Implementadas tal como se diseñaron:** `usuario_recinto` (con `unidad_id` en vez de `numero_vivienda`), `alertas` y `auditoria`.
-- **Modificadas:** las tablas ADMIN, PROPIETARIO y GUARDIA se reemplazaron por `roles`; VEHICULO perdió `es_visita`/`fecha_expiracion` (ahora tabla `visitas`) y `registrado_por` (lo cubre la auditoría); PROCESADOR pasó a `dispositivos` con relación 1:N con cámaras; REGISTRO_ACCESO pasó a `accesos` con más datos.
+- **Implementadas tal como se diseñaron:** `usuario_recinto` (con `unidad_id` en vez de `numero_vivienda` y con `rol_id`: el rol se asigna por recinto), `alertas` y `auditoria`.
+- **Modificadas:** las tablas ADMIN, PROPIETARIO y GUARDIA se reemplazaron por una sola cuenta en `usuarios` + `roles` asignados por recinto en `usuario_recinto`; VEHICULO perdió `es_visita`/`fecha_expiracion` (ahora tabla `visitas`) y `registrado_por` (lo cubre la auditoría); PROCESADOR pasó a `dispositivos` con relación 1:N con cámaras; REGISTRO_ACCESO pasó a `accesos` con más datos.
 - **Nuevas:** `roles`, `unidades`, `visitas`, `notificaciones` y `sincronizaciones`.
 
 ## Criterios de borrado (ON DELETE)
