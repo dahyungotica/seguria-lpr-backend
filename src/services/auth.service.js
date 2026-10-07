@@ -1,9 +1,10 @@
-// Lógica de autenticación: validar credenciales, generar JWT y obtener el usuario actual
+// Lógica de autenticación: validar credenciales, elegir recinto, generar JWT y obtener el usuario actual
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { query } = require('../config/db');
 const { env } = require('../config/env');
 const HttpError = require('../utils/HttpError');
+const ROLES = require('../utils/roles');
 
 const MENSAJE_CREDENCIALES = 'Credenciales inválidas';
 
@@ -12,22 +13,52 @@ const MENSAJE_CREDENCIALES = 'Credenciales inválidas';
 const HASH_FICTICIO = bcrypt.hashSync('contraseña-ficticia', 10);
 
 const SQL_USUARIO = `
-  SELECT u.id, u.nombre, u.apellido, u.email, u.password_hash, u.activo,
-         u.recinto_id, u.unidad_id, r.nombre AS rol,
-         COALESCE(re.activo, TRUE) AS recinto_activo
+  SELECT u.id, u.nombre, u.apellido, u.email, u.password_hash, u.activo, r.nombre AS rol
   FROM usuarios u
   JOIN roles r ON r.id = u.rol_id
-  LEFT JOIN recintos re ON re.id = u.recinto_id
 `;
 
-// Datos públicos del usuario (nunca se devuelve el hash)
-function formatearUsuario(fila) {
+// Recintos activos donde el usuario tiene un vínculo activo (HU-19 / HU-20)
+async function recintosDelUsuario(usuarioId) {
+  const { rows } = await query(
+    `SELECT re.id AS recinto_id, re.nombre, re.comuna, un.identificador AS unidad
+     FROM usuario_recinto ur
+     JOIN recintos re ON re.id = ur.recinto_id
+     LEFT JOIN unidades un ON un.id = ur.unidad_id
+     WHERE ur.usuario_id = $1 AND ur.activo AND re.activo
+     ORDER BY re.nombre`,
+    [usuarioId]
+  );
+  return rows;
+}
+
+// Datos públicos del usuario y del recinto con el que está trabajando (nunca se devuelve el hash)
+function formatearUsuario(fila, recinto) {
   return {
     id: fila.id,
     nombre: `${fila.nombre} ${fila.apellido}`.trim(),
     email: fila.email,
     rol: fila.rol,
-    recinto_id: fila.recinto_id,
+    recinto_id: recinto ? recinto.recinto_id : null,
+    recinto_nombre: recinto ? recinto.nombre : null,
+    unidad: recinto ? recinto.unidad : null,
+  };
+}
+
+function firmarToken(usuario, recintoId) {
+  return jwt.sign({ id: usuario.id, rol: usuario.rol, recinto_id: recintoId || null }, env.JWT_SECRET, {
+    expiresIn: env.JWT_EXPIRES_IN,
+  });
+}
+
+// Respuesta común de login y de cambio de recinto
+function respuestaSesion(usuario, recintos, recinto) {
+  return {
+    token: firmarToken(usuario, recinto && recinto.recinto_id),
+    usuario: formatearUsuario(usuario, recinto),
+    recintos,
+    // true si pertenece a varios recintos y todavía no eligió uno
+    requiere_seleccion: usuario.rol !== ROLES.ADMIN_PLATAFORMA && !recinto,
   };
 }
 
@@ -44,31 +75,44 @@ async function login(email, password) {
     throw new HttpError(403, 'Tu cuenta está desactivada. Contacta al administrador.');
   }
 
-  if (!usuario.recinto_activo) {
-    throw new HttpError(403, 'El recinto está desactivado. Contacta al administrador de la plataforma.');
+  let recintos = [];
+  let recinto = null;
+  if (usuario.rol !== ROLES.ADMIN_PLATAFORMA) {
+    recintos = await recintosDelUsuario(usuario.id);
+    if (recintos.length === 0) {
+      throw new HttpError(403, 'No tienes acceso activo a ningún recinto. Contacta al administrador.');
+    }
+    // Con un solo recinto se entra directo; con varios, el usuario elige (HU-20)
+    if (recintos.length === 1) recinto = recintos[0];
   }
 
   await query('UPDATE usuarios SET ultimo_login = NOW() WHERE id = $1', [usuario.id]);
-
-  const token = jwt.sign(
-    { id: usuario.id, rol: usuario.rol, recinto_id: usuario.recinto_id },
-    env.JWT_SECRET,
-    { expiresIn: env.JWT_EXPIRES_IN }
-  );
-
-  return { token, usuario: formatearUsuario(usuario) };
+  return respuestaSesion(usuario, recintos, recinto);
 }
 
-// Datos actualizados del usuario del token (por si fue desactivado o cambió de rol)
-async function obtenerUsuarioActual(id) {
-  const { rows } = await query(`${SQL_USUARIO} WHERE u.id = $1`, [id]);
+// Elegir (o cambiar) el recinto de trabajo: entrega un token nuevo con ese recinto
+async function seleccionarRecinto(actor, recintoId) {
+  const { rows } = await query(`${SQL_USUARIO} WHERE u.id = $1`, [actor.id]);
   const usuario = rows[0];
+  if (usuario.rol === ROLES.ADMIN_PLATAFORMA) {
+    throw new HttpError(400, 'El administrador de plataforma no trabaja dentro de un recinto');
+  }
+  const recintos = await recintosDelUsuario(usuario.id);
+  const recinto = recintos.find((r) => r.recinto_id === recintoId);
+  if (!recinto) throw new HttpError(403, 'No tienes acceso a ese recinto');
+  return respuestaSesion(usuario, recintos, recinto);
+}
 
-  if (!usuario || !usuario.activo || !usuario.recinto_activo) {
+// Datos actualizados del usuario del token
+async function obtenerUsuarioActual(actor) {
+  const { rows } = await query(`${SQL_USUARIO} WHERE u.id = $1`, [actor.id]);
+  const usuario = rows[0];
+  if (!usuario || !usuario.activo) {
     throw new HttpError(401, 'Sesión no válida');
   }
-
-  return formatearUsuario(usuario);
+  const recintos = usuario.rol === ROLES.ADMIN_PLATAFORMA ? [] : await recintosDelUsuario(usuario.id);
+  const recinto = recintos.find((r) => r.recinto_id === actor.recinto_id) || null;
+  return { usuario: formatearUsuario(usuario, recinto), recintos };
 }
 
-module.exports = { login, obtenerUsuarioActual };
+module.exports = { login, seleccionarRecinto, obtenerUsuarioActual };

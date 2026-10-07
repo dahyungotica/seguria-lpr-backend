@@ -1,9 +1,10 @@
-// Servicio de dispositivos (Raspberry Pi) del recinto del usuario
+// Servicio de dispositivos (Raspberry Pi) del recinto de la sesión
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { query } = require('../config/db');
 const HttpError = require('../utils/HttpError');
 const { construirUpdate } = require('../utils/sql');
+const auditoria = require('./auditoria.service');
 
 const CAMPOS_EDITABLES = ['nombre', 'identificador', 'ip', 'estado'];
 
@@ -22,50 +23,59 @@ async function generarApiKey() {
   return { apiKey, hash };
 }
 
-async function listar(recintoId) {
-  const { rows } = await query(`${SQL_DISPOSITIVOS} WHERE d.recinto_id = $1 ORDER BY d.nombre`, [recintoId]);
+const resumen = (d) => d && { nombre: d.nombre, identificador: d.identificador, ip: d.ip, estado: d.estado };
+
+async function listar(actor) {
+  const { rows } = await query(`${SQL_DISPOSITIVOS} WHERE d.recinto_id = $1 ORDER BY d.nombre`, [actor.recinto_id]);
   return rows;
 }
 
-async function obtener(recintoId, id) {
-  const { rows } = await query(`${SQL_DISPOSITIVOS} WHERE d.id = $1 AND d.recinto_id = $2`, [id, recintoId]);
+async function obtener(actor, id) {
+  const { rows } = await query(`${SQL_DISPOSITIVOS} WHERE d.id = $1 AND d.recinto_id = $2`, [id, actor.recinto_id]);
   if (!rows[0]) throw new HttpError(404, 'Dispositivo no encontrado');
   return rows[0];
 }
 
-async function crear(recintoId, datos) {
+async function crear(actor, datos) {
   const { apiKey, hash } = await generarApiKey();
   const { rows } = await query(
     `INSERT INTO dispositivos (recinto_id, nombre, identificador, api_key_hash, ip)
      VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [recintoId, datos.nombre, datos.identificador, hash, datos.ip]
+    [actor.recinto_id, datos.nombre, datos.identificador, hash, datos.ip]
   );
-  return { dispositivo: await obtener(recintoId, rows[0].id), api_key: apiKey };
+  const dispositivo = await obtener(actor, rows[0].id);
+  await auditoria.registrar(actor, { accion: 'crear', entidad: 'dispositivos', entidadId: dispositivo.id, despues: resumen(dispositivo), detalle: dispositivo.nombre });
+  return { dispositivo, api_key: apiKey };
 }
 
-async function actualizar(recintoId, id, datos) {
+async function actualizar(actor, id, datos) {
   const update = construirUpdate(datos, CAMPOS_EDITABLES, 3);
   if (!update) throw new HttpError(400, 'No hay datos para actualizar');
 
-  const { rowCount } = await query(
+  const anterior = await obtener(actor, id);
+  await query(
     `UPDATE dispositivos SET ${update.set} WHERE id = $1 AND recinto_id = $2`,
-    [id, recintoId, ...update.valores]
+    [id, actor.recinto_id, ...update.valores]
   );
-  if (rowCount === 0) throw new HttpError(404, 'Dispositivo no encontrado');
-  return obtener(recintoId, id);
+  const dispositivo = await obtener(actor, id);
+  await auditoria.registrar(actor, { accion: 'editar', entidad: 'dispositivos', entidadId: id, antes: resumen(anterior), despues: resumen(dispositivo), detalle: dispositivo.nombre });
+  return dispositivo;
 }
 
 // Al eliminarlo, sus cámaras quedan sin dispositivo y los accesos se conservan
-async function eliminar(recintoId, id) {
-  const { rowCount } = await query('DELETE FROM dispositivos WHERE id = $1 AND recinto_id = $2', [id, recintoId]);
-  if (rowCount === 0) throw new HttpError(404, 'Dispositivo no encontrado');
+async function eliminar(actor, id) {
+  const dispositivo = await obtener(actor, id);
+  await query('DELETE FROM dispositivos WHERE id = $1 AND recinto_id = $2', [id, actor.recinto_id]);
+  await auditoria.registrar(actor, { accion: 'eliminar', entidad: 'dispositivos', entidadId: id, antes: resumen(dispositivo), detalle: dispositivo.nombre });
 }
 
 // Invalida la key anterior (por ejemplo, si se filtró o se reinstaló el equipo)
-async function regenerarApiKey(recintoId, id) {
-  await obtener(recintoId, id);
+async function regenerarApiKey(actor, id) {
+  const dispositivo = await obtener(actor, id);
   const { apiKey, hash } = await generarApiKey();
-  await query('UPDATE dispositivos SET api_key_hash = $3 WHERE id = $1 AND recinto_id = $2', [id, recintoId, hash]);
+  await query('UPDATE dispositivos SET api_key_hash = $3 WHERE id = $1 AND recinto_id = $2', [id, actor.recinto_id, hash]);
+  // Se registra el cambio, nunca la clave
+  await auditoria.registrar(actor, { accion: 'regenerar_clave', entidad: 'dispositivos', entidadId: id, detalle: `Nueva API key para ${dispositivo.nombre}` });
   return { api_key: apiKey };
 }
 

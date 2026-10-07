@@ -99,7 +99,7 @@ async function seed(cliente, { soloAdmin = false } = {}) {
     if (soloAdmin) {
       await insertar(cliente, 'usuarios', {
         password_hash: passwordHash, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
-        email: EMAIL_SUPERADMIN, rol_id: roles.admin_plataforma, recinto_id: null,
+        email: EMAIL_SUPERADMIN, rol_id: roles.admin_plataforma,
       });
       await cliente.query('COMMIT');
       console.log(`✅ Base limpia: solo roles y ${EMAIL_SUPERADMIN} (contraseña: ${PASSWORD_PRUEBA})`);
@@ -146,21 +146,26 @@ async function seed(cliente, { soloAdmin = false } = {}) {
     const usuarioBase = { password_hash: passwordHash };
     await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
-      email: EMAIL_SUPERADMIN, rol_id: roles.admin_plataforma, recinto_id: null,
+      email: EMAIL_SUPERADMIN, rol_id: roles.admin_plataforma,
     });
     const adminRecintoId = await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '22222222-2', nombre: 'Rodrigo', apellido: 'Recinto',
-      email: 'recinto@seguria.cl', rol_id: roles.admin_recinto, recinto_id: recintoId,
+      email: 'recinto@seguria.cl', rol_id: roles.admin_recinto,
     });
     const propietarioId = await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '33333333-3', nombre: 'Patricia', apellido: 'Propietaria',
       email: 'propietario@seguria.cl', telefono: '+56 9 1234 5678',
-      rol_id: roles.propietario, recinto_id: recintoId, unidad_id: depto304,
+      rol_id: roles.propietario,
     });
     const guardiaId = await insertar(cliente, 'usuarios', {
       ...usuarioBase, rut: '44444444-4', nombre: 'Gonzalo', apellido: 'Guardia',
-      email: 'guardia@seguria.cl', rol_id: roles.guardia, recinto_id: recintoId,
+      email: 'guardia@seguria.cl', rol_id: roles.guardia,
     });
+
+    // Vínculo de cada usuario con el recinto (el superadmin no se vincula; la unidad solo aplica al propietario)
+    await insertar(cliente, 'usuario_recinto', { usuario_id: adminRecintoId, recinto_id: recintoId });
+    await insertar(cliente, 'usuario_recinto', { usuario_id: propietarioId, recinto_id: recintoId, unidad_id: depto304 });
+    await insertar(cliente, 'usuario_recinto', { usuario_id: guardiaId, recinto_id: recintoId });
 
     // 5. Vehículos del propietario (la BD normaliza la patente: "GH-JK-12" -> "GHJK12")
     const vehiculo1 = await insertar(cliente, 'vehiculos', {
@@ -186,14 +191,22 @@ async function seed(cliente, { soloAdmin = false } = {}) {
       ...accesoBase, patente_detectada: 'GHJK12', confianza_ocr: 97.5,
       fecha_hora: haceHoras(5), resultado: 'autorizado', vehiculo_id: vehiculo1,
     });
-    await insertar(cliente, 'accesos', {
+    // Acceso denegado: su alerta queda pendiente para el guardia
+    const accesoDenegado = await insertar(cliente, 'accesos', {
       ...accesoBase, patente_detectada: 'BBCC34', confianza_ocr: 91.2,
       fecha_hora: haceHoras(3), resultado: 'denegado',
     });
-    await insertar(cliente, 'accesos', {
+    await insertar(cliente, 'alertas', { recinto_id: recintoId, acceso_id: accesoDenegado });
+    // Acceso autorizado manualmente: su alerta quedó atendida por el guardia
+    const detalleManual = 'Camión de mudanza para Depto 304, confirmado por teléfono con la propietaria';
+    const accesoManual = await insertar(cliente, 'accesos', {
       ...accesoBase, patente_detectada: 'PRST56', confianza_ocr: 88.0,
       fecha_hora: haceHoras(2), resultado: 'autorizado_manual', guardia_id: guardiaId,
-      detalle_autorizacion: 'Camión de mudanza para Depto 304, confirmado por teléfono con la propietaria',
+      detalle_autorizacion: detalleManual,
+    });
+    await insertar(cliente, 'alertas', {
+      recinto_id: recintoId, acceso_id: accesoManual, estado: 'atendida', decision: 'autorizado',
+      guardia_id: guardiaId, detalle: detalleManual, atendida_at: haceHoras(1.9),
     });
     await insertar(cliente, 'accesos', {
       ...accesoBase, patente_detectada: 'KZWX88', confianza_ocr: 95.3,

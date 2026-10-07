@@ -34,4 +34,26 @@ async function query(texto, parametros) {
   return pool.query(texto, parametros);
 }
 
-module.exports = { pool, query };
+// Ejecuta varias consultas como una sola operación: si alguna falla, se deshacen todas.
+// Uso: await transaccion(async (cliente) => { await cliente.query(...); ... });
+async function transaccion(fn) {
+  if (!pool) {
+    const error = new Error('Base de datos no configurada (falta DATABASE_URL)');
+    error.status = 503;
+    throw error;
+  }
+  const cliente = await pool.connect();
+  try {
+    await cliente.query('BEGIN');
+    const resultado = await fn(cliente);
+    await cliente.query('COMMIT');
+    return resultado;
+  } catch (error) {
+    await cliente.query('ROLLBACK');
+    throw error;
+  } finally {
+    cliente.release();
+  }
+}
+
+module.exports = { pool, query, transaccion };

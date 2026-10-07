@@ -3,23 +3,23 @@ const camarasService = require('../services/camaras.service');
 const { datosBody, idDeRuta } = require('../utils/datosValidados');
 
 async function listar(req, res) {
-  res.json(await camarasService.listar(req.usuario.recinto_id));
+  res.json(await camarasService.listar(req.usuario));
 }
 
 async function obtener(req, res) {
-  res.json(await camarasService.obtener(req.usuario.recinto_id, idDeRuta(req)));
+  res.json(await camarasService.obtener(req.usuario, idDeRuta(req)));
 }
 
 async function crear(req, res) {
-  res.status(201).json(await camarasService.crear(req.usuario.recinto_id, datosBody(req)));
+  res.status(201).json(await camarasService.crear(req.usuario, datosBody(req)));
 }
 
 async function actualizar(req, res) {
-  res.json(await camarasService.actualizar(req.usuario.recinto_id, idDeRuta(req), datosBody(req)));
+  res.json(await camarasService.actualizar(req.usuario, idDeRuta(req), datosBody(req)));
 }
 
 async function eliminar(req, res) {
-  await camarasService.eliminar(req.usuario.recinto_id, idDeRuta(req));
+  await camarasService.eliminar(req.usuario, idDeRuta(req));
   res.status(204).end();
 }
 

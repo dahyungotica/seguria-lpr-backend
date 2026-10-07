@@ -19,7 +19,8 @@ async function actualizar(req, res) {
 }
 
 async function cambiarEstado(req, res) {
-  res.json(await usuariosService.cambiarEstado(req.usuario, idDeRuta(req), datosBody(req).activo));
+  const { activo, vinculo_id: vinculoId } = datosBody(req);
+  res.json(await usuariosService.cambiarEstado(req.usuario, idDeRuta(req), activo, vinculoId));
 }
 
 module.exports = { listar, obtener, crear, actualizar, cambiarEstado };

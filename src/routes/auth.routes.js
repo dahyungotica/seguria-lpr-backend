@@ -17,7 +17,16 @@ router.post(
   controller.login
 );
 
-// GET /api/auth/me (requiere token)
-router.get('/me', autenticar, controller.me);
+// POST /api/auth/recinto  { recinto_id }  -> token nuevo para trabajar en ese recinto
+router.post(
+  '/recinto',
+  autenticar.sinRecinto,
+  body('recinto_id').isInt({ min: 1 }).withMessage('Recinto inválido').toInt(),
+  validar,
+  controller.seleccionarRecinto
+);
+
+// GET /api/auth/me (requiere token; funciona aunque aún no se haya elegido recinto)
+router.get('/me', autenticar.sinRecinto, controller.me);
 
 module.exports = router;

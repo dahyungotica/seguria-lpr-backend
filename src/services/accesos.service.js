@@ -1,37 +1,55 @@
-// Servicio de accesos: historial con filtros y estadísticas del recinto
-const { query } = require('../config/db');
+// Servicio de accesos: historial, estadísticas, alertas y registro de detecciones
+//  - admin_plataforma: consulta los accesos de cualquier recinto (HU-23), y la consulta queda auditada.
+//  - admin_recinto y guardia: los de su recinto.
+//  - propietario: solo los de sus vehículos y visitas.
+// Cada acceso denegado genera una alerta pendiente que el guardia atiende autorizando o rechazando (HU-31).
+const { query, transaccion } = require('../config/db');
 const HttpError = require('../utils/HttpError');
 const ROLES = require('../utils/roles');
 const { Filtros, ZONA_HORARIA } = require('../utils/sql');
 const { obtenerPaginacion, respuestaPaginada } = require('../utils/paginacion');
 const { normalizarPatente } = require('../utils/patente');
-const { subirImagen } = require('../utils/cloudinary');
+const { subirImagen, urlFirmada } = require('../utils/cloudinary');
 const { notificarAdmins } = require('./notificaciones.service');
+const auditoria = require('./auditoria.service');
 const { emitirAccesoNuevo, emitirAccesoActualizado } = require('../sockets');
 
-// El propietario se obtiene del vehículo o, si fue una visita, de quien la programó
+// El propietario se obtiene del vehículo o, si fue una visita, de quien la programó.
+// Su unidad es la que tiene EN ESE recinto (usuario_recinto).
 const SQL_ACCESOS = `
-  SELECT a.id, a.recinto_id, a.patente_detectada, a.confianza_ocr, a.imagen_url, a.sentido,
+  SELECT a.id, a.recinto_id, re.nombre AS recinto_nombre,
+         a.patente_detectada, a.confianza_ocr, a.imagen_url, a.sentido,
          a.fecha_hora, a.resultado, a.detalle_autorizacion,
          a.camara_id, c.nombre AS camara_nombre,
          a.vehiculo_id, v.marca AS vehiculo_marca, v.modelo AS vehiculo_modelo, v.color AS vehiculo_color,
          a.visita_id, vi.nombre_visitante,
          p.id AS propietario_id, p.nombre || ' ' || p.apellido AS propietario_nombre,
          un.identificador AS unidad,
-         a.guardia_id, g.nombre || ' ' || g.apellido AS guardia_nombre
+         a.guardia_id, g.nombre || ' ' || g.apellido AS guardia_nombre,
+         al.id AS alerta_id, al.estado AS alerta_estado, al.decision AS alerta_decision,
+         al.detalle AS alerta_detalle, al.atendida_at AS alerta_atendida_at,
+         ga.nombre || ' ' || ga.apellido AS alerta_guardia_nombre
   FROM accesos a
+  JOIN recintos re ON re.id = a.recinto_id
   JOIN camaras c ON c.id = a.camara_id
   LEFT JOIN vehiculos v ON v.id = a.vehiculo_id
   LEFT JOIN visitas vi ON vi.id = a.visita_id
   LEFT JOIN usuarios p ON p.id = COALESCE(v.propietario_id, vi.propietario_id)
-  LEFT JOIN unidades un ON un.id = p.unidad_id
+  LEFT JOIN usuario_recinto pur ON pur.usuario_id = p.id AND pur.recinto_id = a.recinto_id
+  LEFT JOIN unidades un ON un.id = pur.unidad_id
   LEFT JOIN usuarios g ON g.id = a.guardia_id
+  LEFT JOIN alertas al ON al.acceso_id = a.id
+  LEFT JOIN usuarios ga ON ga.id = al.guardia_id
 `;
 
-// Admin y guardia ven su recinto; el propietario, solo sus vehículos y visitas
+// Las capturas son privadas en Cloudinary: se entrega una URL firmada solo a quien puede ver el acceso
+function conImagenFirmada(acceso) {
+  return acceso && acceso.imagen_url ? { ...acceso, imagen_url: urlFirmada(acceso.imagen_url) } : acceso;
+}
+
 function filtrosDeAlcance(actor) {
   const f = new Filtros();
-  f.agregar('a.recinto_id = ?', actor.recinto_id);
+  if (actor.rol !== ROLES.ADMIN_PLATAFORMA) f.agregar('a.recinto_id = ?', actor.recinto_id);
   if (actor.rol === ROLES.PROPIETARIO) f.agregar('p.id = ?', actor.id);
   return f;
 }
@@ -51,6 +69,8 @@ async function listar(actor, filtros) {
   if (filtros.resultado) f.agregar('a.resultado = ?', filtros.resultado);
   if (filtros.sentido) f.agregar('a.sentido = ?', filtros.sentido);
   if (filtros.camara_id) f.agregar('a.camara_id = ?', filtros.camara_id);
+  if (filtros.alerta) f.agregar('al.estado = ?', filtros.alerta);
+  if (filtros.recinto_id && actor.rol === ROLES.ADMIN_PLATAFORMA) f.agregar('a.recinto_id = ?', filtros.recinto_id);
 
   const limite = f.parametro(paginacion.limite);
   const offset = f.parametro(paginacion.offset);
@@ -61,7 +81,17 @@ async function listar(actor, filtros) {
      LIMIT ${limite} OFFSET ${offset}`,
     f.valores
   );
-  return respuestaPaginada(rows, paginacion);
+  const respuesta = respuestaPaginada(rows.map(conImagenFirmada), paginacion);
+
+  // HU-23: las consultas del administrador de plataforma a los accesos quedan auditadas
+  if (actor.rol === ROLES.ADMIN_PLATAFORMA) {
+    const usados = Object.fromEntries(Object.entries(filtros).filter(([, valor]) => valor !== undefined && valor !== ''));
+    await auditoria.registrar(actor, {
+      accion: 'consultar', entidad: 'accesos', recintoId: filtros.recinto_id || null,
+      detalle: `Consultó el historial de accesos (${respuesta.total} resultado(s))`, despues: { filtros: usados },
+    });
+  }
+  return respuesta;
 }
 
 async function obtener(actor, id) {
@@ -69,7 +99,7 @@ async function obtener(actor, id) {
   f.agregar('a.id = ?', id);
   const { rows } = await query(`${SQL_ACCESOS} ${f.where}`, f.valores);
   if (!rows[0]) throw new HttpError(404, 'Acceso no encontrado');
-  return rows[0];
+  return conImagenFirmada(rows[0]);
 }
 
 // Resumen para el panel del administrador del recinto
@@ -96,16 +126,17 @@ async function estadisticas(recintoId) {
        GROUP BY d.dia ORDER BY d.dia`,
       [recintoId]
     ),
-    // Totales del recinto
+    // Totales del recinto (personas con vínculo activo en este recinto)
     query(
       `SELECT
-         (SELECT COUNT(*) FROM usuarios u JOIN roles r ON r.id = u.rol_id
-           WHERE u.recinto_id = $1 AND r.nombre = 'propietario' AND u.activo)::int AS propietarios,
-         (SELECT COUNT(*) FROM usuarios u JOIN roles r ON r.id = u.rol_id
-           WHERE u.recinto_id = $1 AND r.nombre = 'guardia' AND u.activo)::int AS guardias,
+         (SELECT COUNT(*) FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = u.rol_id
+           WHERE ur.recinto_id = $1 AND r.nombre = 'propietario' AND ur.activo AND u.activo)::int AS propietarios,
+         (SELECT COUNT(*) FROM usuario_recinto ur JOIN usuarios u ON u.id = ur.usuario_id JOIN roles r ON r.id = u.rol_id
+           WHERE ur.recinto_id = $1 AND r.nombre = 'guardia' AND ur.activo AND u.activo)::int AS guardias,
          (SELECT COUNT(*) FROM vehiculos WHERE recinto_id = $1 AND activo)::int AS vehiculos,
          (SELECT COUNT(*) FROM visitas WHERE recinto_id = $1 AND estado IN ('programada', 'activa')
-           AND NOW() BETWEEN fecha_inicio AND fecha_fin)::int AS visitas_vigentes`,
+           AND NOW() BETWEEN fecha_inicio AND fecha_fin)::int AS visitas_vigentes,
+         (SELECT COUNT(*) FROM alertas WHERE recinto_id = $1 AND estado = 'pendiente')::int AS alertas_pendientes`,
       [recintoId]
     ),
   ]);
@@ -123,22 +154,56 @@ async function estadisticas(recintoId) {
 // Acceso completo por id (uso interno, para emitirlo en tiempo real)
 async function obtenerPorId(id) {
   const { rows } = await query(`${SQL_ACCESOS} WHERE a.id = $1`, [id]);
-  return rows[0];
+  return conImagenFirmada(rows[0]);
 }
 
-// El guardia autoriza un ingreso que fue denegado. El detalle es obligatorio (también lo exige un CHECK de la BD).
-async function autorizarManual(guardia, id, detalle) {
-  const acceso = await obtener(guardia, id);
-  if (acceso.resultado !== 'denegado') {
-    throw new HttpError(400, 'Solo se pueden autorizar manualmente accesos denegados');
+// La alerta debe estar pendiente para poder atenderla
+async function alertaPendiente(guardia, accesoId) {
+  const acceso = await obtener(guardia, accesoId);
+  if (!acceso.alerta_id) throw new HttpError(400, 'Este acceso no tiene una alerta que atender');
+  if (acceso.alerta_estado !== 'pendiente') {
+    throw new HttpError(400, `La alerta ya fue atendida (${acceso.alerta_decision} por ${acceso.alerta_guardia_nombre})`);
   }
+  return acceso;
+}
 
+// HU-31: el guardia autoriza un ingreso denegado. El detalle es obligatorio (también lo exige la BD).
+async function autorizarManual(guardia, id, detalle) {
+  const acceso = await alertaPendiente(guardia, id);
+  await transaccion(async (cliente) => {
+    await cliente.query(
+      `UPDATE accesos SET resultado = 'autorizado_manual', guardia_id = $2, detalle_autorizacion = $3
+       WHERE id = $1 AND resultado = 'denegado'`,
+      [id, guardia.id, detalle]
+    );
+    await cliente.query(
+      `UPDATE alertas SET estado = 'atendida', decision = 'autorizado', guardia_id = $2, detalle = $3, atendida_at = NOW()
+       WHERE acceso_id = $1 AND estado = 'pendiente'`,
+      [id, guardia.id, detalle]
+    );
+  });
+  return cerrarGestion(guardia, acceso, 'autorizar', detalle);
+}
+
+// HU-31: el guardia rechaza el ingreso. El acceso sigue denegado y la alerta queda atendida.
+async function rechazar(guardia, id, detalle) {
+  const acceso = await alertaPendiente(guardia, id);
   await query(
-    `UPDATE accesos SET resultado = 'autorizado_manual', guardia_id = $2, detalle_autorizacion = $3
-     WHERE id = $1 AND resultado = 'denegado'`,
-    [id, guardia.id, detalle]
+    `UPDATE alertas SET estado = 'atendida', decision = 'rechazado', guardia_id = $2, detalle = $3, atendida_at = NOW()
+     WHERE acceso_id = $1 AND estado = 'pendiente'`,
+    [id, guardia.id, detalle || null]
   );
-  const actualizado = await obtenerPorId(id);
+  return cerrarGestion(guardia, acceso, 'rechazar', detalle);
+}
+
+async function cerrarGestion(guardia, anterior, accion, detalle) {
+  const actualizado = await obtenerPorId(anterior.id);
+  await auditoria.registrar(guardia, {
+    accion, entidad: 'alertas', entidadId: anterior.alerta_id, recintoId: anterior.recinto_id,
+    antes: { patente: anterior.patente_detectada, resultado: anterior.resultado, alerta: anterior.alerta_estado },
+    despues: { patente: actualizado.patente_detectada, resultado: actualizado.resultado, alerta: actualizado.alerta_estado, decision: actualizado.alerta_decision },
+    detalle: detalle || null,
+  });
   emitirAccesoActualizado(actualizado.recinto_id, actualizado);
   return actualizado;
 }
@@ -164,29 +229,40 @@ async function registrarDesdeDispositivo(dispositivo, datos) {
   const autorizacion = autorizaciones[0];
   const resultado = !autorizacion ? 'denegado' : autorizacion.origen === 'vehiculo' ? 'autorizado' : 'visita';
 
-  // La imagen se sube a Cloudinary; en la BD queda solo la URL
+  // La imagen se sube a Cloudinary como privada; en la BD queda solo la URL (sin firma)
   let imagenUrl = datos.imagen_url || null;
   if (datos.imagen_base64) {
     imagenUrl = (await subirImagen(datos.imagen_base64)).url;
   }
 
-  const { rows } = await query(
-    `INSERT INTO accesos (recinto_id, camara_id, dispositivo_id, patente_detectada, confianza_ocr, imagen_url,
-                          sentido, fecha_hora, resultado, vehiculo_id, visita_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $10, $11) RETURNING id`,
-    [
-      dispositivo.recinto_id, datos.camara_id, dispositivo.id, patente, datos.confianza_ocr ?? null, imagenUrl,
-      camaras[0].sentido, datos.fecha_hora || null, resultado,
-      autorizacion ? autorizacion.vehiculo_id : null, autorizacion ? autorizacion.visita_id : null,
-    ]
-  );
+  const accesoId = await transaccion(async (cliente) => {
+    const { rows } = await cliente.query(
+      `INSERT INTO accesos (recinto_id, camara_id, dispositivo_id, patente_detectada, confianza_ocr, imagen_url,
+                            sentido, fecha_hora, resultado, vehiculo_id, visita_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $10, $11) RETURNING id`,
+      [
+        dispositivo.recinto_id, datos.camara_id, dispositivo.id, patente, datos.confianza_ocr ?? null, imagenUrl,
+        camaras[0].sentido, datos.fecha_hora || null, resultado,
+        autorizacion ? autorizacion.vehiculo_id : null, autorizacion ? autorizacion.visita_id : null,
+      ]
+    );
+    // Cada ingreso no autorizado queda como alerta pendiente para el guardia (HU-31)
+    if (resultado === 'denegado') {
+      await cliente.query('INSERT INTO alertas (recinto_id, acceso_id) VALUES ($1, $2)', [dispositivo.recinto_id, rows[0].id]);
+    }
+    return rows[0].id;
+  });
 
   // La visita pasa a "activa" con su primer ingreso
   if (resultado === 'visita' && camaras[0].sentido === 'entrada') {
     await query("UPDATE visitas SET estado = 'activa' WHERE id = $1 AND estado = 'programada'", [autorizacion.visita_id]);
   }
 
-  const acceso = await obtenerPorId(rows[0].id);
+  const acceso = await obtenerPorId(accesoId);
+  await auditoria.registrar({ tipo: 'dispositivo', ...dispositivo }, {
+    accion: 'crear', entidad: 'accesos', entidadId: accesoId, recintoId: dispositivo.recinto_id,
+    despues: { patente, resultado, camara: acceso.camara_nombre, confianza_ocr: acceso.confianza_ocr },
+  });
   emitirAccesoNuevo(dispositivo.recinto_id, acceso);
 
   if (resultado === 'denegado') {
@@ -201,4 +277,4 @@ async function registrarDesdeDispositivo(dispositivo, datos) {
   return acceso;
 }
 
-module.exports = { listar, obtener, estadisticas, autorizarManual, registrarDesdeDispositivo };
+module.exports = { listar, obtener, estadisticas, autorizarManual, rechazar, registrarDesdeDispositivo };

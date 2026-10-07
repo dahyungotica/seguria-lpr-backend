@@ -14,10 +14,16 @@ async function estadisticas(req, res) {
   res.json(await accesosService.estadisticas(req.usuario.recinto_id));
 }
 
-// El guardia autoriza un ingreso denegado dejando el motivo
+// El guardia autoriza un ingreso denegado dejando el motivo (obligatorio)
 async function autorizarManual(req, res) {
   const { detalle_autorizacion: detalle } = datosBody(req);
   res.json(await accesosService.autorizarManual(req.usuario, idDeRuta(req), detalle));
 }
 
-module.exports = { listar, obtener, estadisticas, autorizarManual };
+// El guardia rechaza el ingreso (el motivo es opcional)
+async function rechazar(req, res) {
+  const { detalle } = datosBody(req);
+  res.json(await accesosService.rechazar(req.usuario, idDeRuta(req), detalle));
+}
+
+module.exports = { listar, obtener, estadisticas, autorizarManual, rechazar };
