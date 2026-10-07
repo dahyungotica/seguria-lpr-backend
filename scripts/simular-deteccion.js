@@ -7,7 +7,8 @@
 //   --api <url>        URL de la API (por defecto http://localhost:3000/api)
 //   --id <texto>       Identificador del dispositivo (el que registraste en "Cámaras y equipos")
 //   --key <texto>      API key que se mostró al crear el dispositivo
-//   --camara <id>      Id de la cámara (debe estar en el mismo recinto del dispositivo)
+//   --camara <id>      Opcional: id de la cámara. Si no se indica, se usa la cámara asignada al equipo
+//                      (cada Raspberry Pi tiene una sola cámara; sin cámara asignada no puede registrar accesos)
 //   --patente <texto>  Patente detectada (por defecto una al azar)
 //   --confianza <n>    Confianza del OCR, 0 a 100 (por defecto 95)
 //   --sin-imagen       No envía captura (no usa Cloudinary)
@@ -22,7 +23,7 @@ function argumento(nombre, porDefecto) {
 const API = argumento('api', process.env.SIM_API || 'http://localhost:3000/api');
 const ID = argumento('id', process.env.SIM_ID);
 const KEY = argumento('key', process.env.SIM_KEY);
-const CAMARA = Number(argumento('camara', process.env.SIM_CAMARA));
+const CAMARA = Number(argumento('camara', process.env.SIM_CAMARA)) || null;
 const CONFIANZA = Number(argumento('confianza', 95));
 const SIN_IMAGEN = process.argv.includes('--sin-imagen');
 
@@ -45,7 +46,7 @@ function imagenDePrueba(patente) {
     <rect x="250" y="245" width="460" height="120" rx="10" fill="#f8fafc" stroke="#0f172a" stroke-width="6"/>
     <text x="480" y="335" font-family="Arial, sans-serif" font-size="72" font-weight="bold" text-anchor="middle" fill="#0f172a">${texto}</text>
     <text x="480" y="275" font-family="Arial, sans-serif" font-size="18" text-anchor="middle" fill="#334155">CHILE</text>
-    <text x="20" y="35" font-family="monospace" font-size="22" fill="#e5e7eb">CAM ${CAMARA} · ${new Date().toLocaleString('es-CL')}</text>
+    <text x="20" y="35" font-family="monospace" font-size="22" fill="#e5e7eb">${ID} · ${new Date().toLocaleString('es-CL')}</text>
   </svg>`;
   return 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64');
 }
@@ -64,8 +65,8 @@ async function llamar(metodo, ruta, body) {
 }
 
 async function main() {
-  if (!ID || !KEY || !CAMARA) {
-    console.error('Faltan datos. Uso: node scripts/simular-deteccion.js --id <IDENTIFICADOR> --key <API_KEY> --camara <ID> [--patente ABCD12]');
+  if (!ID || !KEY) {
+    console.error('Faltan datos. Uso: node scripts/simular-deteccion.js --id <IDENTIFICADOR> --key <API_KEY> [--patente ABCD12]');
     process.exit(1);
   }
 
@@ -73,7 +74,7 @@ async function main() {
   console.log('💓 Heartbeat enviado');
 
   const acceso = await llamar('POST', '/dispositivos/equipo/accesos', {
-    camara_id: CAMARA,
+    camara_id: CAMARA || undefined,
     patente: PATENTE,
     confianza_ocr: CONFIANZA,
     imagen_base64: SIN_IMAGEN ? undefined : imagenDePrueba(PATENTE),

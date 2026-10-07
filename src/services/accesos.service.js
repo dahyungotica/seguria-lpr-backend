@@ -213,11 +213,16 @@ async function cerrarGestion(guardia, anterior, accion, detalle) {
 async function registrarDesdeDispositivo(dispositivo, datos) {
   const patente = normalizarPatente(datos.patente);
 
-  const { rows: camaras } = await query(
-    'SELECT id, sentido FROM camaras WHERE id = $1 AND recinto_id = $2',
-    [datos.camara_id, dispositivo.recinto_id]
-  );
-  if (!camaras[0]) throw new HttpError(400, 'La cámara no pertenece al recinto del dispositivo');
+  // Cada Raspberry Pi tiene UNA cámara asignada (1 a 1): la detección se registra en esa cámara.
+  // Un equipo sin cámara (pendiente de asignación) no puede registrar accesos.
+  const { rows: camaras } = await query('SELECT id, sentido FROM camaras WHERE dispositivo_id = $1', [dispositivo.id]);
+  if (!camaras[0]) {
+    throw new HttpError(409, 'Este equipo no tiene una cámara asignada. Asígnala en "Cámaras y equipos" antes de usarlo.');
+  }
+  if (datos.camara_id && datos.camara_id !== camaras[0].id) {
+    throw new HttpError(400, 'La cámara indicada no es la asignada a este equipo');
+  }
+  datos = { ...datos, camara_id: camaras[0].id };
 
   // ¿Está autorizada? Prioridad: vehículo registrado y luego visita vigente
   const { rows: autorizaciones } = await query(

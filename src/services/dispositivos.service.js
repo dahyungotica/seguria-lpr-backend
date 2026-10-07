@@ -8,12 +8,13 @@ const auditoria = require('./auditoria.service');
 
 const CAMPOS_EDITABLES = ['nombre', 'identificador', 'ip', 'estado'];
 
-// Nunca se devuelve api_key_hash
+// Nunca se devuelve api_key_hash. Cada equipo atiende UNA cámara (o ninguna: pendiente de asignación).
 const SQL_DISPOSITIVOS = `
   SELECT d.id, d.recinto_id, d.nombre, d.identificador, d.ip, d.estado,
          d.ultima_sincronizacion, d.ultimo_heartbeat, d.created_at, d.updated_at,
-         (SELECT COUNT(*) FROM camaras c WHERE c.dispositivo_id = d.id)::int AS total_camaras
+         c.id AS camara_id, c.nombre AS camara_nombre, c.sentido AS camara_sentido
   FROM dispositivos d
+  LEFT JOIN camaras c ON c.dispositivo_id = d.id
 `;
 
 // Genera una API key aleatoria y su hash. La key en claro se muestra UNA sola vez.
@@ -62,7 +63,7 @@ async function actualizar(actor, id, datos) {
   return dispositivo;
 }
 
-// Al eliminarlo, sus cámaras quedan sin dispositivo y los accesos se conservan
+// Al eliminarlo, su cámara queda pendiente de asignación y los accesos se conservan
 async function eliminar(actor, id) {
   const dispositivo = await obtener(actor, id);
   await query('DELETE FROM dispositivos WHERE id = $1 AND recinto_id = $2', [id, actor.recinto_id]);

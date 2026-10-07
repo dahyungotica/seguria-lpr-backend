@@ -16,7 +16,7 @@ erDiagram
     recintos ||--o{ visitas : "recibe"
     recintos ||--o{ dispositivos : "tiene"
     recintos ||--o{ camaras : "tiene"
-    dispositivos |o--o{ camaras : "procesa"
+    dispositivos |o--o| camaras : "procesa (1 a 1)"
     camaras ||--o{ accesos : "captura"
     recintos ||--o{ accesos : "registra"
     dispositivos |o--o{ accesos : "detecta"
@@ -124,7 +124,7 @@ erDiagram
     camaras {
         int id PK
         int recinto_id FK
-        int dispositivo_id FK
+        int dispositivo_id FK,UK
         varchar nombre
         varchar ubicacion
         varchar sentido
@@ -213,8 +213,8 @@ erDiagram
 | **usuario_recinto** | Roles de cada persona en cada recinto: una fila por recinto + rol, con la unidad (solo en el rol propietario) y su estado. Así una misma cuenta puede administrar 3 recintos, ser guardia en 2 y propietaria en 1, y al iniciar sesión elige con qué perfil entrar (HU-19, HU-20). Único: (usuario, recinto, rol). El admin de plataforma no se vincula (HU-22). Un trigger valida rol, unidad y recinto. |
 | **vehiculos** | Vehículos de cada propietario en un recinto. Patente normalizada y única por recinto. |
 | **visitas** | Visitas con ventana horaria: hasta 24 h si las programa el propietario, hasta 30 días el admin (HU-28). Si traen patente, queda autorizada mientras estén vigentes. |
-| **dispositivos** | Raspberry Pi de cada recinto (API key con hash, último heartbeat y última sincronización). Un equipo atiende varias cámaras. |
-| **camaras** | Cámaras IP; cada una controla una entrada o una salida y se conecta a un equipo. |
+| **dispositivos** | Raspberry Pi de cada recinto (API key con hash, último heartbeat y última sincronización). Cada equipo atiende **una sola cámara** (relación 1 a 1); un equipo sin cámara queda pendiente de asignación. |
+| **camaras** | Cámaras IP; cada una controla una entrada o una salida. `dispositivo_id` es único (1 a 1 con la Raspberry Pi) y opcional: sin equipo, la cámara queda **pendiente de asignación** y no se usa (no registra accesos ni aparece en el monitor del guardia). |
 | **accesos** | Historial de detecciones con su resultado. La captura se guarda en Cloudinary como privada (solo la URL en la BD) y se elimina a los 60 días (HU-32). |
 | **alertas** | Una por cada acceso denegado. El guardia la atiende autorizando (detalle obligatorio) o rechazando; queda pendiente o atendida con la decisión (HU-31). |
 | **notificaciones** | Avisos en tiempo real al administrador (cambios de propietarios, visitas, accesos no autorizados). |
@@ -232,7 +232,7 @@ erDiagram
 ## Cambios respecto al MER original (HU-6)
 
 - **Implementadas tal como se diseñaron:** `usuario_recinto` (con `unidad_id` en vez de `numero_vivienda` y con `rol_id`: el rol se asigna por recinto), `alertas` y `auditoria`.
-- **Modificadas:** las tablas ADMIN, PROPIETARIO y GUARDIA se reemplazaron por una sola cuenta en `usuarios` + `roles` asignados por recinto en `usuario_recinto`; VEHICULO perdió `es_visita`/`fecha_expiracion` (ahora tabla `visitas`) y `registrado_por` (lo cubre la auditoría); PROCESADOR pasó a `dispositivos` con relación 1:N con cámaras; REGISTRO_ACCESO pasó a `accesos` con más datos.
+- **Modificadas:** las tablas ADMIN, PROPIETARIO y GUARDIA se reemplazaron por una sola cuenta en `usuarios` + `roles` asignados por recinto en `usuario_recinto`; VEHICULO perdió `es_visita`/`fecha_expiracion` (ahora tabla `visitas`) y `registrado_por` (lo cubre la auditoría); PROCESADOR pasó a `dispositivos`, manteniendo la relación 1 a 1 con la cámara pero opcional (cámara o equipo sin pareja = pendiente de asignación); REGISTRO_ACCESO pasó a `accesos` con más datos.
 - **Nuevas:** `roles`, `unidades`, `visitas`, `notificaciones` y `sincronizaciones`.
 
 ## Criterios de borrado (ON DELETE)
