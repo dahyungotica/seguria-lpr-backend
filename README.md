@@ -8,6 +8,10 @@ API REST y servidor de tiempo real de **SegurIA-LPR**, sistema de control de acc
 
 > Estado actual: todos los módulos funcionales (administrador de plataforma, administrador de recinto, propietario, guardia) y los endpoints de la Raspberry Pi (heartbeat, sincronización de patentes y registro de detecciones con imagen en Cloudinary).
 
+## Documentación
+
+`documentation/SegurIA-LPR_Presentacion_Plataforma.docx`: documento de presentación de la plataforma (qué es, cómo funciona, roles y recorrido por cada pantalla). Es el mismo documento que está en el repositorio del frontend.
+
 ## Estructura
 
 ```
@@ -115,8 +119,8 @@ curl http://localhost:3000/api/auth/me -H "Authorization: Bearer <token>"
 | Dispositivos | `GET/POST /dispositivos`, `GET/PUT/DELETE /dispositivos/:id`, `POST /dispositivos/:id/api-key` | admin_recinto | ✅ |
 | Accesos | `GET /accesos` (filtros + paginación), `GET /accesos/:id`, `GET /accesos/estadisticas` | admin_recinto, guardia, propietario (solo los suyos) | ✅ |
 | Notificaciones | `GET /notificaciones`, `GET /notificaciones/no-leidas`, `PATCH /notificaciones/:id/leida`, `PATCH /notificaciones/leer-todas` | admin_recinto | ✅ |
-| Vehículos | `GET/POST /vehiculos`, `GET/PUT/DELETE /vehiculos/:id` | propietario (los suyos, sin aprobación; notifica al admin) · admin_recinto · guardia (lectura) | ✅ |
-| Visitas | `GET/POST /visitas` (`?vigencia=proximas|pasadas|hoy`), `GET/PUT /visitas/:id`, `PATCH /visitas/:id/cancelar` | propietario · admin_recinto y guardia (lectura) | ✅ |
+| Vehículos | `GET/POST /vehiculos` (`?propietario_id=`), `GET/PUT/DELETE /vehiculos/:id` | propietario (los suyos, sin aprobación; notifica al admin) · admin_recinto (a nombre de un propietario, con `propietario_id`) · guardia (lectura) | ✅ |
+| Visitas | `GET/POST /visitas` (`?vigencia=proximas\|pasadas\|hoy`, `?propietario_id=`), `GET/PUT /visitas/:id`, `PATCH /visitas/:id/cancelar` | propietario · admin_recinto (a nombre de un propietario, con `propietario_id`) · guardia (lectura) | ✅ |
 | Autorización manual | `POST /accesos/:id/autorizar` `{ detalle_autorizacion }` | guardia (solo accesos denegados) | ✅ |
 | Raspberry Pi | `POST /dispositivos/equipo/heartbeat`, `GET /dispositivos/equipo/patentes`, `POST /dispositivos/equipo/accesos` | dispositivo (headers `X-Dispositivo-Id` y `X-API-Key`) | ✅ |
 

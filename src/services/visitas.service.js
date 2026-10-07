@@ -1,6 +1,6 @@
 // Servicio de visitas
 //  - propietario:   programa, edita y cancela SUS visitas.
-//  - admin_recinto: consulta y puede cancelar visitas de su recinto.
+//  - admin_recinto: consulta, programa, edita y cancela visitas a nombre de los propietarios de su recinto.
 //  - guardia:       consulta las visitas de su recinto (ej. las vigentes hoy).
 // Si la visita trae patente, queda autorizada mientras esté vigente (vw_patentes_autorizadas).
 const { query } = require('../config/db');
@@ -46,6 +46,7 @@ function filtrosDeAlcance(actor) {
 async function listar(actor, filtros = {}) {
   const paginacion = obtenerPaginacion(filtros);
   const f = filtrosDeAlcance(actor);
+  if (filtros.propietario_id) f.agregar('vi.propietario_id = ?', filtros.propietario_id);
 
   if (filtros.vigencia === 'proximas') {
     f.agregar(`(${SQL_ESTADO_ACTUAL}) IN ('programada', 'activa')`);
@@ -100,17 +101,39 @@ function limpiar(datos) {
   return d;
 }
 
+// El admin de recinto puede programar visitas a nombre de un propietario activo de su recinto
+// (por ejemplo, si el propietario tiene dificultades para usar la plataforma).
+async function validarPropietario(recintoId, propietarioId) {
+  if (!propietarioId) throw new HttpError(400, 'Debes indicar el propietario');
+  const { rows } = await query(
+    `SELECT u.activo FROM usuarios u JOIN roles r ON r.id = u.rol_id
+     WHERE u.id = $1 AND u.recinto_id = $2 AND r.nombre = 'propietario'`,
+    [propietarioId, recintoId]
+  );
+  if (!rows[0]) throw new HttpError(400, 'El propietario no pertenece a este recinto');
+  if (!rows[0].activo) throw new HttpError(400, 'El propietario está desactivado');
+}
+
 async function crear(actor, datos) {
   validarFechas(datos.fecha_inicio, datos.fecha_fin);
   const d = limpiar(datos);
 
+  let propietarioId = actor.id;
+  if (actor.rol === ROLES.ADMIN_RECINTO) {
+    await validarPropietario(actor.recinto_id, d.propietario_id);
+    propietarioId = d.propietario_id;
+  }
+
   const { rows } = await query(
     `INSERT INTO visitas (propietario_id, recinto_id, nombre_visitante, rut_visitante, patente, motivo, fecha_inicio, fecha_fin)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-    [actor.id, actor.recinto_id, d.nombre_visitante, d.rut_visitante || null, d.patente || null,
+    [propietarioId, actor.recinto_id, d.nombre_visitante, d.rut_visitante || null, d.patente || null,
       d.motivo || null, d.fecha_inicio, d.fecha_fin]
   );
   const visita = await obtener(actor, rows[0].id);
+
+  // Si la registró el propio admin no tiene sentido notificarlo
+  if (actor.rol !== ROLES.PROPIETARIO) return visita;
 
   await notificarAdmins(actor.recinto_id, {
     tipo: 'visita_creada',
