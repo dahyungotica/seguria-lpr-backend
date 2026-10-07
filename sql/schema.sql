@@ -237,7 +237,7 @@ CREATE TABLE dispositivos (
 
 CREATE INDEX idx_dispositivos_recinto ON dispositivos (recinto_id);
 
-COMMENT ON TABLE dispositivos IS 'Equipos Raspberry Pi instalados en cada recinto. Procesan las imágenes y validan contra una copia local de patentes.';
+COMMENT ON TABLE dispositivos IS 'Equipos Raspberry Pi instalados en cada recinto. Cada uno procesa las imágenes de UNA cámara y valida contra una copia local de patentes.';
 COMMENT ON COLUMN dispositivos.identificador IS 'Código único del equipo (ej. número de serie) que usa para autenticarse.';
 COMMENT ON COLUMN dispositivos.api_key_hash IS 'Hash bcrypt de la API key del dispositivo.';
 COMMENT ON COLUMN dispositivos.ultimo_heartbeat IS 'Última señal de vida recibida; sirve para detectar equipos sin conexión.';
@@ -248,7 +248,7 @@ COMMENT ON COLUMN dispositivos.ultimo_heartbeat IS 'Última señal de vida recib
 CREATE TABLE camaras (
   id             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   recinto_id     INTEGER NOT NULL REFERENCES recintos (id) ON DELETE CASCADE,
-  dispositivo_id INTEGER REFERENCES dispositivos (id) ON DELETE SET NULL,
+  dispositivo_id INTEGER UNIQUE REFERENCES dispositivos (id) ON DELETE SET NULL,
   nombre         VARCHAR(80) NOT NULL,
   ubicacion      VARCHAR(120),
   sentido        VARCHAR(10) NOT NULL CHECK (sentido IN ('entrada', 'salida')),
@@ -261,9 +261,9 @@ CREATE TABLE camaras (
 );
 
 CREATE INDEX idx_camaras_recinto ON camaras (recinto_id);
-CREATE INDEX idx_camaras_dispositivo ON camaras (dispositivo_id);
 
-COMMENT ON TABLE camaras IS 'Cámaras IP que capturan los vehículos. Cada una se conecta a un dispositivo y controla un sentido (entrada o salida).';
+COMMENT ON TABLE camaras IS 'Cámaras IP que capturan los vehículos. Cada una controla un sentido (entrada o salida) y se conecta a UNA Raspberry Pi (relación 1 a 1).';
+COMMENT ON COLUMN camaras.dispositivo_id IS 'Raspberry Pi asignada (única: un equipo atiende una sola cámara). NULL = cámara pendiente de asignación: no se usa ni se muestra en el monitor.';
 COMMENT ON COLUMN camaras.url_stream IS 'URL RTSP/HTTP del video de la cámara.';
 
 -- ---------------------------------------------------------------------

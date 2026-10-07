@@ -23,9 +23,9 @@ function reglasDispositivo(edicion) {
   ];
 }
 
-// Detección enviada por la Raspberry Pi
+// Detección enviada por la Raspberry Pi (camara_id es opcional: se usa la cámara asignada al equipo)
 const reglasDeteccion = [
-  body('camara_id').isInt({ min: 1 }).withMessage('camara_id inválido').toInt(),
+  body('camara_id').optional({ values: 'null' }).isInt({ min: 1 }).withMessage('camara_id inválido').toInt(),
   body('patente').isString().customSanitizer(normalizarPatente)
     .isLength({ min: 4, max: 10 }).withMessage('Patente inválida'),
   body('confianza_ocr').optional({ values: 'null' }).isFloat({ min: 0, max: 100 }).toFloat(),

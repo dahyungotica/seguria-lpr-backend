@@ -70,7 +70,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `npm run db:seed` | Carga datos de prueba (roles, recinto, unidades, cámara, dispositivo, usuarios, vehículos, accesos). |
 | `npm run db:reset` | **Borra todo**, recrea el esquema y carga los datos de prueba. Bloqueado si `NODE_ENV=production`. |
 | `npm run db:limpiar` | **Borra todo** y deja solo los roles y la cuenta `admin@seguria-lpr.cl`. Útil para empezar pruebas desde cero. |
-| `npm run simular -- --id <ID> --key <API_KEY> --camara <ID> [--patente ABCD12]` | Simula una Raspberry Pi enviando una detección (ver más abajo). |
+| `npm run simular -- --id <ID> --key <API_KEY> [--patente ABCD12]` | Simula una Raspberry Pi enviando una detección (ver más abajo). |
 | `npm run escuchar -- --id <ID> --key <API_KEY>` | Se conecta como una Raspberry Pi y muestra la sincronización de patentes en tiempo real (HU-36). |
 
 El modelo está documentado en [docs/MER.md](docs/MER.md).
@@ -119,7 +119,7 @@ curl http://localhost:3000/api/auth/me -H "Authorization: Bearer <token>"
 | Recintos | `GET/POST /recintos`, `GET/PUT /recintos/:id`, `PATCH /recintos/:id/estado` | admin_plataforma (admin_recinto solo ve el suyo) | ✅ |
 | Usuarios | `GET/POST /usuarios`, `GET /usuarios/opciones`, `GET/PUT /usuarios/:id`, `PATCH /usuarios/:id/estado` | plataforma → administradores de recinto · recinto → administradores, guardias y propietarios de sus recintos · guardia → solo lectura de propietarios | ✅ |
 | Unidades | `GET/POST /unidades`, `GET/PUT/DELETE /unidades/:id` | admin_recinto (guardia lectura) | ✅ |
-| Cámaras | `GET/POST /camaras`, `GET/PUT/DELETE /camaras/:id` | admin_recinto (guardia lectura) | ✅ |
+| Cámaras | `GET/POST /camaras`, `GET/PUT/DELETE /camaras/:id` (`dispositivo_id`: su Raspberry Pi, 1 a 1) | admin_recinto (el guardia solo ve las cámaras con equipo) | ✅ |
 | Dispositivos | `GET/POST /dispositivos`, `GET/PUT/DELETE /dispositivos/:id`, `POST /dispositivos/:id/api-key` | admin_recinto | ✅ |
 | Accesos | `GET /accesos` (filtros: fechas, patente, resultado, cámara, sentido, `alerta`, `recinto_id`), `GET /accesos/:id`, `GET /accesos/estadisticas` | admin_plataforma (todos los recintos, consulta auditada, HU-23), admin_recinto, guardia, propietario (solo los suyos) | ✅ |
 | Notificaciones | `GET /notificaciones`, `GET /notificaciones/no-leidas`, `PATCH /notificaciones/:id/leida`, `PATCH /notificaciones/leer-todas` | admin_recinto | ✅ |
@@ -139,7 +139,7 @@ Notas:
 
 ### Detecciones de la Raspberry Pi
 
-`POST /api/dispositivos/equipo/accesos` recibe `{ camara_id, patente, confianza_ocr, imagen_base64 | imagen_url, fecha_hora? }`.
+`POST /api/dispositivos/equipo/accesos` recibe `{ patente, confianza_ocr, imagen_base64 | imagen_url, fecha_hora?, camara_id? }`. Cada Raspberry Pi tiene **una sola cámara** (relación 1 a 1), así que el acceso se registra en la cámara asignada al equipo; si el equipo no tiene cámara asignada responde 409. Una cámara sin equipo queda **pendiente de asignación**: no registra accesos ni aparece en el monitor del guardia.
 El servidor decide el resultado con `vw_patentes_autorizadas` (vehículo activo → `autorizado`, visita vigente → `visita`, otro → `denegado`),
 sube la imagen a Cloudinary (carpeta `seguria-lpr/capturas`), guarda solo la URL, la emite por Socket.io (`acceso:nuevo`) y, si fue denegado, notifica al administrador.
 
@@ -176,7 +176,7 @@ elimina de Cloudinary las capturas con más de 60 días; el acceso se conserva y
 2. Abre el **Monitor en vivo** con un guardia.
 3. Ejecuta (contra local o contra Render con `--api https://seguria-lpr-backend.onrender.com/api`):
    ```bash
-   npm run simular -- --id RPI-01 --key <API_KEY> --camara 1 --patente ABCD12
+   npm run simular -- --id RPI-01 --key <API_KEY> --patente ABCD12
    ```
    Sin `--patente` usa una al azar (aparecerá como denegada). `--sin-imagen` evita subir a Cloudinary.
 
