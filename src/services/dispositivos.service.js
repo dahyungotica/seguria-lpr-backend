@@ -5,6 +5,7 @@ const { query } = require('../config/db');
 const HttpError = require('../utils/HttpError');
 const { construirUpdate } = require('../utils/sql');
 const auditoria = require('./auditoria.service');
+const conexionEquipos = require('./conexionEquipos.service');
 
 const CAMPOS_EDITABLES = ['nombre', 'identificador', 'ip', 'estado'];
 
@@ -97,12 +98,9 @@ async function autenticar(identificador, apiKey) {
   return { id: dispositivo.id, recinto_id: dispositivo.recinto_id, nombre: dispositivo.nombre };
 }
 
-// Señal de vida: el equipo avisa que sigue conectado
+// Señal de vida: el equipo avisa que sigue conectado (si estaba sin conexión, se avisa al admin y a los guardias)
 async function heartbeat(dispositivo, ip) {
-  await query(
-    "UPDATE dispositivos SET ultimo_heartbeat = NOW(), estado = 'activo', ip = COALESCE($2, ip) WHERE id = $1",
-    [dispositivo.id, ip || null]
-  );
+  await conexionEquipos.marcarActivo(dispositivo, ip);
   return { ok: true, hora_servidor: new Date().toISOString() };
 }
 

@@ -11,6 +11,7 @@
 //   "acceso:actualizado"    -> un guardia atendió la alerta de un acceso (autorizó o rechazó)
 //   "vehiculo:cambio"       -> un propietario creó/editó/eliminó un vehículo (admin del recinto)
 //   "notificacion:nueva"    -> notificación para un usuario
+//   "dispositivo:estado"    -> una Raspberry Pi se conectó o perdió la conexión (admin y guardias del recinto)
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { env } = require('../config/env');
@@ -66,6 +67,7 @@ function iniciarEspacioDispositivos() {
   // Se requieren aquí para evitar dependencias circulares al cargar los módulos
   const dispositivosService = require('../services/dispositivos.service');
   const sincronizacion = require('../services/sincronizacion.service');
+  const conexionEquipos = require('../services/conexionEquipos.service');
 
   espacioDispositivos = io.of('/dispositivos');
 
@@ -82,6 +84,11 @@ function iniciarEspacioDispositivos() {
 
   espacioDispositivos.on('connection', async (socket) => {
     socket.join(`recinto:${socket.dispositivo.recinto_id}`);
+    // Si se desconecta, queda "sin conexión" (salvo que se reconecte dentro del tiempo de gracia)
+    const dispositivoId = socket.dispositivo.id;
+    socket.on('disconnect', () => {
+      conexionEquipos.programarDesconexion(dispositivoId, () => idsConectados().includes(dispositivoId));
+    });
     await dispositivosService.heartbeat(socket.dispositivo).catch(() => {});
     await sincronizacion.enviarCompleta(socket);
     // El equipo puede pedir la lista completa en cualquier momento (ej. tras reiniciarse)
@@ -89,6 +96,13 @@ function iniciarEspacioDispositivos() {
   });
 
   sincronizacion.iniciarRevisionPeriodica();
+  conexionEquipos.iniciarRevision(idsConectados);
+}
+
+// Ids de los equipos con al menos una conexión Socket.io abierta
+function idsConectados() {
+  if (!espacioDispositivos) return [];
+  return [...new Set([...espacioDispositivos.sockets.values()].map((s) => s.dispositivo.id))];
 }
 
 function obtenerEspacioDispositivos() {
@@ -125,6 +139,11 @@ function emitirVehiculoCambio(recintoId, cambio) {
   emitir([`recinto:${recintoId}:${ROLES.ADMIN_RECINTO}`, `recinto:${recintoId}:${ROLES.GUARDIA}`], 'vehiculo:cambio', cambio);
 }
 
+// Una Raspberry Pi cambió de estado (activo / sin conexión): lo ven el administrador y los guardias del recinto
+function emitirEstadoDispositivo(recintoId, dispositivo) {
+  emitir([`recinto:${recintoId}:${ROLES.ADMIN_RECINTO}`, `recinto:${recintoId}:${ROLES.GUARDIA}`], 'dispositivo:estado', dispositivo);
+}
+
 // Notificación dirigida a un usuario
 function emitirNotificacion(usuarioId, notificacion) {
   emitir([`usuario:${usuarioId}`], 'notificacion:nueva', notificacion);
@@ -137,5 +156,6 @@ module.exports = {
   emitirAccesoNuevo,
   emitirAccesoActualizado,
   emitirVehiculoCambio,
+  emitirEstadoDispositivo,
   emitirNotificacion,
 };

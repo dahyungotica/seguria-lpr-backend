@@ -17,6 +17,8 @@ const sincronizacion = require('./sincronizacion.service');
 const CAMPOS_EDITABLES = ['nombre_visitante', 'rut_visitante', 'patente', 'motivo', 'fecha_inicio', 'fecha_fin'];
 // HU-28: el propietario autoriza visitas de hasta 24 horas; el admin de recinto puede dar más plazo
 const DURACION_MAXIMA_HORAS = { [ROLES.PROPIETARIO]: 24, [ROLES.ADMIN_RECINTO]: 30 * 24 };
+// El propietario debe dar al menos 5 minutos de visita; el admin de recinto no tiene mínimo
+const DURACION_MINIMA_MINUTOS = { [ROLES.PROPIETARIO]: 5 };
 
 // El estado guardado puede quedar desactualizado con el paso del tiempo,
 // por eso se calcula el estado real según la hora actual.
@@ -87,12 +89,16 @@ async function obtener(actor, id) {
   return rows[0];
 }
 
-// Reglas de fechas: fin posterior al inicio, fin en el futuro y duración máxima según quién la programa
+// Reglas de fechas: fin posterior al inicio, fin en el futuro y duración mínima y máxima según quién la programa
 function validarFechas(actor, inicio, fin) {
   const desde = new Date(inicio);
   const hasta = new Date(fin);
   if (hasta <= desde) throw new HttpError(400, 'La fecha de término debe ser posterior a la de inicio');
   if (hasta <= new Date()) throw new HttpError(400, 'La visita debe terminar en el futuro');
+  const minimoMinutos = DURACION_MINIMA_MINUTOS[actor.rol] || 0;
+  if (hasta - desde < minimoMinutos * 60000) {
+    throw new HttpError(400, `La visita debe durar al menos ${minimoMinutos} minutos`);
+  }
   const maximoHoras = DURACION_MAXIMA_HORAS[actor.rol] || 24;
   if (hasta - desde > maximoHoras * 3600000) {
     throw new HttpError(400, maximoHoras <= 24

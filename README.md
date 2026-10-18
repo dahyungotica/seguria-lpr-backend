@@ -173,7 +173,7 @@ elimina de Cloudinary las capturas con más de 60 días; el acceso se conserva y
 ### Simular una detección (sin Raspberry Pi)
 
 1. Como admin de recinto, en **Cámaras y equipos** crea un equipo y copia su API key. Anota el id de la cámara.
-2. Abre el **Monitor en vivo** con un guardia.
+2. Abre el **Monitor** con un guardia.
 3. Ejecuta (contra local o contra Render con `--api https://seguria-lpr-backend.onrender.com/api`):
    ```bash
    npm run simular -- --id RPI-01 --key <API_KEY> --patente ABCD12
@@ -186,7 +186,12 @@ Los permisos de cada ruta están en `src/routes/*.routes.js` y el alcance por ro
 
 El cliente se conecta con `io(URL, { auth: { token } })`. Cada socket se une a las rooms `recinto:<id>`, `rol:<nombre>`, `recinto:<id>:<rol>` y `usuario:<id>`.
 
-Eventos para la web: `acceso:nuevo`, `acceso:actualizado` (alerta atendida), `vehiculo:cambio`, `notificacion:nueva`.
+Eventos para la web: `acceso:nuevo`, `acceso:actualizado` (alerta atendida), `vehiculo:cambio`, `notificacion:nueva`, `dispositivo:estado`.
+
+**Estado de conexión de las Raspberry Pi:** un equipo queda `activo` al conectarse por Socket.io o enviar un heartbeat.
+Pasa a `sin_conexion` cuando se cierra su conexión Socket.io (con 15 s de gracia por si se reconecta) o cuando lleva
+más de 3 minutos sin señal; un equipo conectado por Socket.io cuenta como señal de vida. Cada cambio se emite como
+`dispositivo:estado` al administrador y a los guardias del recinto, y la cámara del equipo se muestra "Sin señal".
 
 **Sincronización de las Raspberry Pi (HU-36):** el equipo se conecta al espacio `/dispositivos` con
 `io(URL + '/dispositivos', { auth: { identificador, api_key } })` y recibe `patentes:completa` (lista completa al conectarse
