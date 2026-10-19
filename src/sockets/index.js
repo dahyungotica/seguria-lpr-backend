@@ -93,6 +93,8 @@ function iniciarEspacioDispositivos() {
     await sincronizacion.enviarCompleta(socket);
     // El equipo puede pedir la lista completa en cualquier momento (ej. tras reiniciarse)
     socket.on('patentes:solicitar', () => sincronizacion.enviarCompleta(socket));
+    // El equipo informa si recibe imagen de su cámara: { senal: true | false }
+    socket.on('camara:estado', (datos) => conexionEquipos.reportarCamara(dispositivoId, datos && datos.senal));
   });
 
   sincronizacion.iniciarRevisionPeriodica();

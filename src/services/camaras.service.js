@@ -8,6 +8,7 @@ const HttpError = require('../utils/HttpError');
 const ROLES = require('../utils/roles');
 const { construirUpdate } = require('../utils/sql');
 const auditoria = require('./auditoria.service');
+const conexionEquipos = require('./conexionEquipos.service');
 
 const CAMPOS_EDITABLES = ['nombre', 'ubicacion', 'sentido', 'ip', 'url_stream', 'estado', 'dispositivo_id'];
 
@@ -20,6 +21,9 @@ const SQL_CAMARAS = `
 
 const resumen = (c) => c && Object.fromEntries(CAMPOS_EDITABLES.map((k) => [k, c[k]]));
 
+// Señal de imagen que informa la Raspberry Pi de la cámara (null = sin dato)
+const conSenal = (c) => ({ ...c, camara_senal: c.dispositivo_id ? conexionEquipos.senalCamara(c.dispositivo_id) : null });
+
 // El guardia solo ve las cámaras operativas (con su Raspberry Pi); el admin las ve todas
 async function listar(actor) {
   const soloAsignadas = actor.rol !== ROLES.ADMIN_RECINTO;
@@ -27,13 +31,13 @@ async function listar(actor) {
     `${SQL_CAMARAS} WHERE c.recinto_id = $1 ${soloAsignadas ? 'AND c.dispositivo_id IS NOT NULL' : ''} ORDER BY c.nombre`,
     [actor.recinto_id]
   );
-  return rows;
+  return rows.map(conSenal);
 }
 
 async function obtener(actor, id) {
   const { rows } = await query(`${SQL_CAMARAS} WHERE c.id = $1 AND c.recinto_id = $2`, [id, actor.recinto_id]);
   if (!rows[0]) throw new HttpError(404, 'Cámara no encontrada');
-  return rows[0];
+  return conSenal(rows[0]);
 }
 
 // El equipo debe ser del mismo recinto y no estar asignado a otra cámara (relación 1 a 1)

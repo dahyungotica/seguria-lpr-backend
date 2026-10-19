@@ -35,8 +35,14 @@ const reglasDeteccion = [
   body('fecha_hora').optional({ values: 'null' }).isISO8601({ strict: true }),
 ];
 
+// Heartbeat: camara_senal (opcional) es false si el equipo no recibe imagen de su cámara y true si la recibe
+const reglasHeartbeat = [
+  v.ip(),
+  body('camara_senal').optional({ values: 'null' }).isBoolean().withMessage('camara_senal debe ser true o false').toBoolean(),
+];
+
 // --- Endpoints para la Raspberry Pi (van antes de /:id para no confundirse) ---
-router.post('/equipo/heartbeat', autenticarDispositivo, v.ip(), validar, controller.heartbeat);
+router.post('/equipo/heartbeat', autenticarDispositivo, reglasHeartbeat, validar, controller.heartbeat);
 router.get('/equipo/patentes', autenticarDispositivo, controller.obtenerPatentes);
 router.post('/equipo/accesos', autenticarDispositivo, reglasDeteccion, validar, controller.registrarAcceso);
 

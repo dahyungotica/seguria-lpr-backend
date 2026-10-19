@@ -193,6 +193,12 @@ Pasa a `sin_conexion` cuando se cierra su conexión Socket.io (con 15 s de graci
 más de 3 minutos sin señal; un equipo conectado por Socket.io cuenta como señal de vida. Cada cambio se emite como
 `dispositivo:estado` al administrador y a los guardias del recinto, y la cámara del equipo se muestra "Sin señal".
 
+**Señal de la cámara:** la plataforma no se conecta a la cámara, solo a la Raspberry Pi, así que es el equipo quien
+informa si recibe imagen: por Socket.io emite `camara:estado` con `{ senal: false }` al dejar de recibir cuadros y
+`{ senal: true }` al recuperarlos, o envía `camara_senal` (true/false) en el heartbeat. Con el equipo conectado y la
+cámara sin imagen, la cámara se muestra "Sin señal" y el equipo "Activo"; si el equipo pierde la conexión, ambos quedan
+sin señal. Si el equipo no informa nada, se asume que recibe imagen.
+
 **Sincronización de las Raspberry Pi (HU-36):** el equipo se conecta al espacio `/dispositivos` con
 `io(URL + '/dispositivos', { auth: { identificador, api_key } })` y recibe `patentes:completa` (lista completa al conectarse
 o al enviar `patentes:solicitar`) y `patentes:cambios` (`{ altas, bajas }`) ante cada alta, edición, desactivación,

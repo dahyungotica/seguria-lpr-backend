@@ -34,7 +34,8 @@ async function regenerarApiKey(req, res) {
 // ----- Llamadas de la Raspberry Pi (req.dispositivo lo deja authDispositivo) -----
 
 async function heartbeat(req, res) {
-  res.json(await dispositivosService.heartbeat(req.dispositivo, datosBody(req).ip));
+  const datos = datosBody(req);
+  res.json(await dispositivosService.heartbeat(req.dispositivo, datos.ip, datos.camara_senal));
 }
 
 async function obtenerPatentes(req, res) {

@@ -4,6 +4,11 @@
 //    o pasaron más de 3 minutos sin ninguna señal          -> sin_conexion
 // Cada cambio se avisa en tiempo real al admin y a los guardias del recinto ("dispositivo:estado").
 // Un equipo "inactivo" (desactivado a mano por el admin) solo vuelve a activo cuando da señales.
+//
+// Señal de la cámara: la plataforma no se conecta a la cámara, solo a la Raspberry Pi. Por eso es el equipo
+// quien informa si recibe imagen (evento "camara:estado" { senal } o "camara_senal" en el heartbeat).
+// Se guarda en memoria mientras el equipo está conectado; sin dato se asume que recibe imagen.
+// Si el equipo pierde la conexión, su cámara también queda sin señal (no hay forma de comprobarla).
 const { query } = require('../config/db');
 
 const SIN_SENAL_MINUTOS = 3;
@@ -11,6 +16,20 @@ const REVISION_MS = 60 * 1000;
 const GRACIA_DESCONEXION_MS = 15 * 1000;
 
 const desconexionesPendientes = new Map(); // dispositivoId -> temporizador
+const senalCamaras = new Map(); // dispositivoId -> true (recibe imagen) / false (sin imagen)
+
+// true / false según lo último que informó el equipo, o null si no ha informado
+function senalCamara(dispositivoId) {
+  return senalCamaras.has(dispositivoId) ? senalCamaras.get(dispositivoId) : null;
+}
+
+// Guarda la señal informada. Devuelve true si cambió lo que se muestra (sin dato ya se muestra "con señal").
+function guardarSenalCamara(dispositivoId, senal) {
+  if (typeof senal !== 'boolean') return false;
+  const anterior = senalCamara(dispositivoId);
+  senalCamaras.set(dispositivoId, senal);
+  return (anterior === false) !== (senal === false);
+}
 
 // Envía el estado actual del equipo (con su cámara) al admin y a los guardias de su recinto
 async function avisar(dispositivoId) {
@@ -21,15 +40,19 @@ async function avisar(dispositivoId) {
      WHERE d.id = $1`,
     [dispositivoId]
   );
-  if (rows[0]) require('../sockets').emitirEstadoDispositivo(rows[0].recinto_id, rows[0]);
+  if (rows[0]) {
+    require('../sockets').emitirEstadoDispositivo(rows[0].recinto_id, { ...rows[0], camara_senal: senalCamara(dispositivoId) });
+  }
 }
 
 function avisarSinError(dispositivoId) {
   avisar(dispositivoId).catch((e) => console.error('Error al avisar el estado del equipo:', e.message));
 }
 
-// Señal de vida (heartbeat REST o conexión Socket.io). Avisa solo si el equipo estaba sin conexión o inactivo.
-async function marcarActivo(dispositivo, ip) {
+// Señal de vida (heartbeat REST o conexión Socket.io), con la señal de la cámara si el equipo la informa.
+// Avisa solo si el equipo estaba sin conexión o inactivo, o si cambió la señal de la cámara.
+async function marcarActivo(dispositivo, ip, camaraSenal) {
+  const cambioCamara = guardarSenalCamara(dispositivo.id, camaraSenal);
   clearTimeout(desconexionesPendientes.get(dispositivo.id));
   desconexionesPendientes.delete(dispositivo.id);
 
@@ -41,7 +64,12 @@ async function marcarActivo(dispositivo, ip) {
      RETURNING previo.anterior`,
     [dispositivo.id, ip || null]
   );
-  if (rows[0] && rows[0].anterior !== 'activo') avisarSinError(dispositivo.id);
+  if ((rows[0] && rows[0].anterior !== 'activo') || cambioCamara) avisarSinError(dispositivo.id);
+}
+
+// El equipo informa por Socket.io que su cámara dejó de entregar imagen o la recuperó
+function reportarCamara(dispositivoId, senal) {
+  if (guardarSenalCamara(dispositivoId, senal)) avisarSinError(dispositivoId);
 }
 
 // Pasa a "sin_conexion" los equipos indicados que estaban activos
@@ -51,6 +79,8 @@ async function marcarSinConexion(ids) {
     "UPDATE dispositivos SET estado = 'sin_conexion' WHERE id = ANY($1::int[]) AND estado = 'activo' RETURNING id",
     [ids]
   );
+  // Sin conexión no se sabe nada de la cámara: al volver, el equipo informa de nuevo
+  ids.forEach((id) => senalCamaras.delete(id));
   rows.forEach((r) => avisarSinError(r.id));
 }
 
@@ -88,4 +118,7 @@ function iniciarRevision(obtenerIdsConectados) {
   intervalo.unref();
 }
 
-module.exports = { marcarActivo, marcarSinConexion, programarDesconexion, revisar, iniciarRevision, SIN_SENAL_MINUTOS };
+module.exports = {
+  marcarActivo, marcarSinConexion, programarDesconexion, revisar, iniciarRevision,
+  reportarCamara, senalCamara, SIN_SENAL_MINUTOS,
+};

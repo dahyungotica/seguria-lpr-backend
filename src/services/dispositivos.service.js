@@ -27,15 +27,18 @@ async function generarApiKey() {
 
 const resumen = (d) => d && { nombre: d.nombre, identificador: d.identificador, ip: d.ip, estado: d.estado };
 
+// Señal de imagen de la cámara del equipo, según lo que informa el propio equipo (null = sin dato)
+const conSenalCamara = (d) => ({ ...d, camara_senal: d.camara_id ? conexionEquipos.senalCamara(d.id) : null });
+
 async function listar(actor) {
   const { rows } = await query(`${SQL_DISPOSITIVOS} WHERE d.recinto_id = $1 ORDER BY d.nombre`, [actor.recinto_id]);
-  return rows;
+  return rows.map(conSenalCamara);
 }
 
 async function obtener(actor, id) {
   const { rows } = await query(`${SQL_DISPOSITIVOS} WHERE d.id = $1 AND d.recinto_id = $2`, [id, actor.recinto_id]);
   if (!rows[0]) throw new HttpError(404, 'Dispositivo no encontrado');
-  return rows[0];
+  return conSenalCamara(rows[0]);
 }
 
 async function crear(actor, datos) {
@@ -99,8 +102,8 @@ async function autenticar(identificador, apiKey) {
 }
 
 // Señal de vida: el equipo avisa que sigue conectado (si estaba sin conexión, se avisa al admin y a los guardias)
-async function heartbeat(dispositivo, ip) {
-  await conexionEquipos.marcarActivo(dispositivo, ip);
+async function heartbeat(dispositivo, ip, camaraSenal) {
+  await conexionEquipos.marcarActivo(dispositivo, ip, camaraSenal);
   return { ok: true, hora_servidor: new Date().toISOString() };
 }
 
