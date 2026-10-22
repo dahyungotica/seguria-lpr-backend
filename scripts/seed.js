@@ -97,7 +97,7 @@ async function seed(cliente, { soloAdmin = false } = {}) {
 
     if (soloAdmin) {
       await insertar(cliente, 'usuarios', {
-        password_hash: passwordHash, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
+        password_hash: passwordHash, rut: '11111111-1', nombre: 'ADMIN', apellido: '',
         email: EMAIL_SUPERADMIN, es_admin_plataforma: true,
       });
       await cliente.query('COMMIT');
@@ -144,7 +144,7 @@ async function seed(cliente, { soloAdmin = false } = {}) {
     // 4. Un usuario por rol
     const usuarioBase = { password_hash: passwordHash };
     await insertar(cliente, 'usuarios', {
-      ...usuarioBase, rut: '11111111-1', nombre: 'Ana', apellido: 'Plataforma',
+      ...usuarioBase, rut: '11111111-1', nombre: 'ADMIN', apellido: '',
       email: EMAIL_SUPERADMIN, es_admin_plataforma: true,
     });
     const adminRecintoId = await insertar(cliente, 'usuarios', {
